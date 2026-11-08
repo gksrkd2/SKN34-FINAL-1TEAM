@@ -51,7 +51,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:17-alpine
+        image: pgvector/pgvector:0.8.7-pg17-bookworm
         env:
           POSTGRES_USER: mitjip
           POSTGRES_PASSWORD: ci-only-password
@@ -147,6 +147,8 @@ jobs:
         run: |
           docker compose -f compose.yaml config --quiet
           docker compose -f compose.yaml -f compose.override.yaml config --quiet
+      - name: PostgreSQL pgvector 이미지 빌드
+        run: docker build --tag mitjip-db:ci ./deploy/postgres
       - name: FastAPI 운영 이미지 빌드
         run: docker build --target prod --tag mitjip-api:ci ./backend
       - name: FastAPI 이미지 내부 모듈 검사

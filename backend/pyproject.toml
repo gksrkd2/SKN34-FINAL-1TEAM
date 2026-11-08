@@ -17,6 +17,7 @@ dependencies = [
     "pillow>=13.0.0",
     "pillow-heif>=1.8.1",
     "boto3>=1.42,<2",
+    "pgvector>=0.5.1,<0.6",
 ]
 
 [dependency-groups]

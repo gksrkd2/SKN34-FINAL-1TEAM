@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # 기능 models를 만들면 autogenerate가 읽도록 여기에 한 줄씩, 이름 순으로 import한다.
 import app.auth.models
 import app.files.models
+import app.knowledge.models
 import app.notify.models
 import app.project.models
 import app.quote.models
+import app.refprice.models
 import app.schedule.models
 import app.vendor.models
 import app.visit.models  # noqa: F401

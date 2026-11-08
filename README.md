@@ -490,3 +490,18 @@ docker compose watch web   # 화면 코드를 고치면 바로 반영한다 (이
 ## 📝 회고
 
 <!-- TODO: 최종 발표 뒤 작성 -->
+
+
+## 기준 데이터·RAG 스키마 적용
+
+로컬 DB는 PostgreSQL 17 Alpine에 pgvector 0.8.7을 더한 이미지를 사용합니다. 기존 볼륨은 유지합니다.
+
+```bash
+docker compose build db
+docker compose up -d --no-deps db
+docker compose run --rm --no-deps migrate uv run --locked alembic upgrade head
+```
+
+위 migration 명령은 기본 시드 명령을 덮어씁니다. 새 revision은 vector 확장과 빈 테이블 7개만 만들며 CSV 적재·임베딩 생성은 하지 않습니다. Python 의존성이 바뀌었으므로 이후 API/worker 이미지를 갱신할 때는 새 lock 파일로 빌드합니다.
+
+현재 0019의 downgrade는 새 표를 제거하므로 데이터 적재 뒤에는 별도 보존 판단이 필요합니다. 공유 vector 확장은 downgrade에서 제거하지 않습니다. AWS RDS 적용 전에는 해당 PostgreSQL 버전의 vector 확장 제공 여부와 migration 계정 권한을 확인합니다.

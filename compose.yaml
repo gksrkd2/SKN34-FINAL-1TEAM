@@ -17,7 +17,9 @@ x-api-env: &api-env
 
 services:
   db:
-    image: postgres:17-alpine
+    image: skn34-final/db:pgvector-0.8.7
+    build:
+      context: ./deploy/postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-mitjip}
       POSTGRES_USER: ${POSTGRES_USER:-mitjip}
