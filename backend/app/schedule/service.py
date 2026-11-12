@@ -219,6 +219,12 @@ async def _save(
 
 async def ensure_expected(s: AsyncSession, p: ProjectOut, today: date) -> Plan:
     prev = await _latest(s, p.id, "expected")
+    if prev and prev.formula_ver == "image-2026.11.12":
+        if prev.project_rev != p.rev:
+            from app.schedule.expected import missing
+
+            raise missing()
+        return prev
     if prev and prev.project_rev == p.rev and prev.formula_ver == FORMULA_VERSION:
         return prev
     await _save(s, p, default_start(p, today), False, prev)
@@ -244,6 +250,8 @@ async def _out(s: AsyncSession, plan: Plan) -> PlanOut:
         work_days=plan.work_days,
         weekend_work=plan.weekend_work,
         computed_at=plan.created_at,
+        formula_version=plan.formula_ver,
+        basis=plan.basis_snapshot,
         blocks=[
             PlanBlockOut(
                 trade=st.trade,
@@ -275,6 +283,10 @@ async def plan_for(
 ) -> PlanOut:
     """GET /projects/{id}/plan: 만든 사람 · 관리자만. 공사 날짜를 하나라도 수락했으면 확정 공정표,
     아니면 예상 공정표. kind로 골라 볼 수 있다."""
+    if kind == "expected":
+        from app.schedule.expected import read
+
+        return await read(s, user, project_id)
     p = await project_service.get_for(s, user, project_id)
     expected = await ensure_expected(s, p, today)
     final = await _latest(s, p.id, "final")
@@ -302,6 +314,10 @@ async def redo(
     if await s.scalar(dealt) is not None:
         raise AppError(409, "dates_locked", REDO_LOCKED)
     prev = await _latest(s, p.id, "expected")
+    if prev and prev.formula_ver == "image-2026.11.12":
+        from app.schedule.expected import missing
+
+        raise missing()
     await _save(s, p, data.start, data.weekend_work, prev)
     got = await _latest(s, p.id, "expected")
     assert got is not None

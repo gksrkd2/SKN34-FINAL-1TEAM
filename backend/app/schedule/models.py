@@ -18,6 +18,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.calc.schedule import JOB_MAX_DAYS
@@ -34,6 +35,7 @@ class Plan(Base):
         CheckConstraint("kind in ('expected', 'final')", name="kind"),
         CheckConstraint("version >= 1", name="version"),
         CheckConstraint("end_date >= start_date", name="dates"),
+        CheckConstraint("jsonb_typeof(basis_snapshot) = 'object'", name="basis_snapshot"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
@@ -49,6 +51,7 @@ class Plan(Base):
     work_days: Mapped[int] = mapped_column(SmallInteger)
     weekend_work: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    basis_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
 
 
 class PlanStep(Base):

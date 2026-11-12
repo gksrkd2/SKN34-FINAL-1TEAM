@@ -54,6 +54,8 @@ class PlanOut(BaseModel):
     work_days: int
     weekend_work: bool
     computed_at: datetime
+    formula_version: str = ""
+    basis: dict = Field(default_factory=dict)
     blocks: list[PlanBlockOut]
     days: list[PlanDayOut]
     changes: list["PlanChangeOut"] = Field(

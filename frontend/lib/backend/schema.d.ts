@@ -279,6 +279,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/expected-plan/inputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 예상 공정표의 사용 가능 품·규격·적용 조건 */
+        get: operations["measured_inputs_projects__project_id__expected_plan_inputs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/expected-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 사용자 물량·인원과 DB 품으로 예상 공정표 생성 */
+        post: operations["measured_plan_projects__project_id__expected_plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/plan": {
         parameters: {
             query?: never;
@@ -1818,6 +1852,23 @@ export interface components {
              */
             left_out: string[];
         };
+        /** ExpectedInput */
+        ExpectedInput: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * Dataset Id
+             * Format: uuid
+             */
+            dataset_id: string;
+            /** Seen Version */
+            seen_version: number;
+            /** Trades */
+            trades: components["schemas"]["MeasuredTrade"][];
+        };
         /**
          * ExtraIn
          * @description 업체가 추가 금액 알리기. 한 번 올리면 고치지 않는다(잘못 올렸으면 새로 올린다).
@@ -2284,6 +2335,42 @@ export interface components {
             /** Phone */
             phone?: string | null;
         };
+        /** MeasuredItem */
+        MeasuredItem: {
+            /** Record Key */
+            record_key: string;
+            /** Quantity */
+            quantity: number | string;
+            /**
+             * Unit
+             * @enum {string}
+             */
+            unit: "m2" | "m" | "ea";
+            /**
+             * Part
+             * @enum {string}
+             */
+            part: "wall" | "ceiling" | "floor" | "frame" | "leaf" | "trim";
+            /**
+             * Accept Conditions
+             * @constant
+             */
+            accept_conditions: true;
+        };
+        /** MeasuredTrade */
+        MeasuredTrade: {
+            /**
+             * Trade
+             * @enum {string}
+             */
+            trade: "dobae" | "mokgong";
+            /** Crew */
+            crew: number;
+            /** Wait Days */
+            wait_days: number;
+            /** Items */
+            items: components["schemas"]["MeasuredItem"][];
+        };
         /** MokgongIn */
         MokgongIn: {
             /** Spaces */
@@ -2710,6 +2797,15 @@ export interface components {
              * Format: date-time
              */
             computed_at: string;
+            /**
+             * Formula Version
+             * @default
+             */
+            formula_version: string;
+            /** Basis */
+            basis?: {
+                [key: string]: unknown;
+            };
             /** Blocks */
             blocks: components["schemas"]["PlanBlockOut"][];
             /** Days */
@@ -3507,6 +3603,36 @@ export interface components {
             quoted: number;
             /** Chosen */
             chosen: number;
+        };
+        /** ReferenceOption */
+        ReferenceOption: {
+            /**
+             * Dataset Id
+             * Format: uuid
+             */
+            dataset_id: string;
+            /** Dataset Version */
+            dataset_version: number;
+            /** Source */
+            source: string;
+            /** Effective Date */
+            effective_date: string | null;
+            /** Trade */
+            trade: string;
+            /** Record Key */
+            record_key: string;
+            /** Name */
+            name: string;
+            /** Specification */
+            specification: string | null;
+            /** Condition */
+            condition: string;
+            /** Unit */
+            unit: string;
+            /** Man Day */
+            man_day: string;
+            /** Parts */
+            parts: string[];
         };
         /** RequestTextOut */
         RequestTextOut: {
@@ -5141,6 +5267,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StandardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    measured_inputs_projects__project_id__expected_plan_inputs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferenceOption"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    measured_plan_projects__project_id__expected_plan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExpectedInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanOut"];
                 };
             };
             /** @description Validation Error */

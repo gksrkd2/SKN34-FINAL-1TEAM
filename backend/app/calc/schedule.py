@@ -12,6 +12,7 @@
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from decimal import ROUND_CEILING, Decimal
 from typing import Literal
 
 from app.calc.common import Step
@@ -63,6 +64,103 @@ class Plan:
     work_days: int  # 작업하는 날 수 (건조 · 청소 빼고)
     start: date
     end: date
+
+
+EXPECTED_FORMULA_VERSION = "image-2026.11.12"
+
+
+@dataclass(frozen=True)
+class WorkItem:
+    """같은 주 직종의 부위별 물량과 품. 보조 인력 품은 전달하지 않는다."""
+
+    part: str
+    quantity: Decimal
+    man_day: Decimal
+    factor: Decimal
+
+
+@dataclass(frozen=True)
+class ExpectedTrade:
+    trade: str
+    items: Sequence[WorkItem]
+    crew: int
+    wait_days: int = 0  # 이 공정 뒤 작업하지 않고 기다리는 달력 날짜
+
+
+def work_duration(items: Sequence[WorkItem], crew: int) -> int:
+    """이미지 산식: ceil(Σ(물량 × 주 직종 품 × 할증) / 주 직종 인원)."""
+    if type(crew) is not int or crew < 1 or not items:
+        raise ValueError("물량과 주 직종 인원을 확인해 주세요")
+    for row in items:
+        if (
+            any(
+                not isinstance(v, Decimal) or not v.is_finite() or v < 0
+                for v in (row.quantity, row.man_day, row.factor)
+            )
+            or row.factor == 0
+        ):
+            raise ValueError("물량·품·할증은 유한한 수이고 할증은 양수여야 해요")
+    total = sum((r.quantity * r.man_day * r.factor for r in items), Decimal(0))
+    if total <= 0:
+        raise ValueError("주 직종 작업량이 있어야 해요")
+    days = int((total / crew).to_integral_value(rounding=ROUND_CEILING))
+    if days > JOB_MAX_DAYS:
+        raise ValueError("작업 기간이 계산 한도를 넘었어요")
+    return days
+
+
+def expected_plan(
+    trades: Sequence[ExpectedTrade], start: date, holidays: Collection[date] = ()
+) -> Plan:
+    """사용자 물량·인원과 검증한 품만으로 예상 일정을 만든다. 준비·청소 기간을 더하지 않는다.
+
+    목공 → 도배. 토요일 작업, 일요일 휴무, 공휴일은 목공만 휴무다.
+    대기는 공휴일을 포함한 달력 날짜이며 시공일과 분리한다.
+    """
+    order = ("mokgong", "dobae")
+    if not trades or len({t.trade for t in trades}) != len(trades):
+        raise ValueError("공정을 중복 없이 골라 주세요")
+    if any(
+        t.trade not in order or type(t.wait_days) is not int or not 0 <= t.wait_days <= JOB_MAX_DAYS
+        for t in trades
+    ):
+        raise ValueError("지원 공정과 대기일을 확인해 주세요")
+    blocks, tasks = [], {}
+    cursor = start
+    for trade in sorted(trades, key=lambda t: order.index(t.trade)):
+        count = work_duration(trade.items, trade.crew)
+        dates = workdays(cursor, count, holidays if trade.trade == "mokgong" else (), (6,))
+        if (dates[-1] - start).days + trade.wait_days > MAX_SPAN_DAYS:
+            raise ValueError("전체 일정이 계산 한도를 넘었어요")
+        blocks.append(
+            Block(
+                trade.trade,
+                "work",
+                "목공" if trade.trade == "mokgong" else "도배",
+                dates[0],
+                dates[-1],
+                count,
+                trade.crew,
+            )
+        )
+        names = tuple(dict.fromkeys(r.part for r in trade.items))
+        for day in dates:
+            tasks[day] = DayTask(day, trade.trade, "work", names)
+        cursor = dates[-1] + timedelta(days=1)
+        if trade.wait_days:
+            end = cursor + timedelta(days=trade.wait_days - 1)
+            blocks.append(Block(None, "dry", "비시공 대기", cursor, end, trade.wait_days, None))
+            for i in range(trade.wait_days):
+                day = cursor + timedelta(days=i)
+                tasks[day] = DayTask(day, None, "dry", ("비시공 대기",))
+            cursor = end + timedelta(days=1)
+    first, end = blocks[0].start, cursor - timedelta(days=1)
+    days = [
+        tasks.get(day, DayTask(day, None, "off", ()))
+        for i in range((end - first).days + 1)
+        if (day := first + timedelta(days=i))
+    ]
+    return Plan(blocks, days, sum(b.days for b in blocks if b.kind == "work"), first, end)
 
 
 def is_off(d: date, days_off: Collection[date], weekend: Collection[int]) -> bool:

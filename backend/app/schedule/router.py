@@ -11,6 +11,9 @@ from app.auth.deps import current_user, require_role
 from app.auth.models import User
 from app.db import get_session
 from app.schedule import service
+from app.schedule.expected import ExpectedInput, ReferenceOption
+from app.schedule.expected import create as create_expected
+from app.schedule.expected import options as expected_options
 from app.schedule.models import CREW_MAX
 from app.schedule.schemas import (
     AcceptIn,
@@ -41,6 +44,33 @@ from app.visit.schemas import InboxSummaryOut, ReselectOut
 router = APIRouter(tags=["공정표 · 업체 확정"])
 customer_only = require_role("customer")
 Trade = Literal["dobae", "mokgong"]
+
+
+@router.get(
+    "/projects/{project_id}/expected-plan/inputs",
+    response_model=list[ReferenceOption],
+    summary="예상 공정표의 사용 가능 품·규격·적용 조건",
+)
+async def measured_inputs(
+    project_id: uuid.UUID,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> list[ReferenceOption]:
+    return await expected_options(s, user, project_id)
+
+
+@router.post(
+    "/projects/{project_id}/expected-plan",
+    response_model=PlanOut,
+    summary="사용자 물량·인원과 DB 품으로 예상 공정표 생성",
+)
+async def measured_plan(
+    project_id: uuid.UUID,
+    data: ExpectedInput,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> PlanOut:
+    return await create_expected(s, user, project_id, data, today_seoul())
 
 
 @router.get(
