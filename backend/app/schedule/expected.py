@@ -11,7 +11,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
-from app.calc.schedule import EXPECTED_FORMULA_VERSION, ExpectedTrade, WorkItem, expected_plan
+from app.calc.schedule import (
+    EXPECTED_FORMULA_VERSION,
+    REFERENCE_FORMULA_VERSION,
+    ExpectedTrade,
+    WorkItem,
+    expected_plan,
+)
 from app.project import service as project_service
 from app.refprice import service as refprice_service
 from app.refprice.holidays import LAST_YEAR, days_off
@@ -64,7 +70,6 @@ class MeasuredTrade(BaseModel):
     model_config = ConfigDict(extra="forbid")
     trade: Literal["dobae", "mokgong"]
     crew: int = Field(strict=True, ge=1, le=CREW_MAX)
-    wait_days: int = Field(strict=True, ge=0, le=120)
     items: list[MeasuredItem] = Field(min_length=1, max_length=30)
 
 
@@ -146,7 +151,7 @@ async def agent_context(s: AsyncSession, user_id: uuid.UUID, project_id: uuid.UU
     if user is None or user.role != "customer":
         raise AppError(403, "forbidden", "고객만 공정표를 상담할 수 있어요.")
     plan = await read(s, user, project_id)
-    if plan.formula_version != EXPECTED_FORMULA_VERSION:
+    if plan.formula_version not in (EXPECTED_FORMULA_VERSION, REFERENCE_FORMULA_VERSION):
         raise missing()
     trades = {b.trade for b in plan.blocks if b.kind == "work"}
     facts = {
@@ -157,6 +162,10 @@ async def agent_context(s: AsyncSession, user_id: uuid.UUID, project_id: uuid.UU
         "change": "공사 날짜의 변경과 확정은 공사 날짜 화면에서 직접 요청해 주세요.",
         "scope": "이 공정표는 선택한 목공과 도배만 다뤄요.",
     }
+    if plan.formula_version == REFERENCE_FORMULA_VERSION:
+        facts["reference"] = (
+            "입력한 집 정보에 맞춰 선택한 예시 평면도 물량과 DB 표준 인원·시공량으로 만든 참고 공정표예요."
+        )
     if trades == {"mokgong", "dobae"}:
         facts["order"] = "목공이 끝난 뒤 도배해요."
     for trade in sorted(trades):
@@ -166,8 +175,6 @@ async def agent_context(s: AsyncSession, user_id: uuid.UUID, project_id: uuid.UU
             if trade == "mokgong"
             else "도배는 일요일을 제외한 공휴일에 작업할 수 있어요."
         )
-    if any(b.kind == "dry" for b in plan.blocks):
-        facts["wait"] = "비시공 대기는 실제 작업일에 포함하지 않아요."
     return {"project_id": str(project_id), "facts": facts, "plan_version": plan.version}
 
 
@@ -259,11 +266,9 @@ async def create(
                     },
                 }
             )
-        trades.append(ExpectedTrade(t.trade, items, t.crew, t.wait_days))
+        trades.append(ExpectedTrade(t.trade, items, t.crew))
         man_days[t.trade] = sum((i.quantity * i.man_day * i.factor for i in items), Decimal(0))
-        snapshot.append(
-            {"trade": t.trade, "crew": t.crew, "wait_days": t.wait_days, "items": evidence}
-        )
+        snapshot.append({"trade": t.trade, "crew": t.crew, "items": evidence})
     try:
         result = expected_plan(
             trades, data.start, days_off(data.start, data.start + timedelta(days=1098))

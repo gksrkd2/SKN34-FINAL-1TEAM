@@ -14,6 +14,7 @@ from app.schedule import service
 from app.schedule.expected import ExpectedInput, ReferenceOption
 from app.schedule.expected import create as create_expected
 from app.schedule.expected import options as expected_options
+from app.schedule.generation import ExpectedStatus, GenerateInput, generate, status_for
 from app.schedule.models import CREW_MAX
 from app.schedule.schemas import (
     AcceptIn,
@@ -37,6 +38,7 @@ from app.schedule.schemas import (
     ScheduleOut,
     TradeExtrasOut,
 )
+from app.shared import ratelimit
 from app.shared.clock import today_seoul
 from app.vendor.deps import approved_vendor
 from app.visit.schemas import InboxSummaryOut, ReselectOut
@@ -44,6 +46,42 @@ from app.visit.schemas import InboxSummaryOut, ReselectOut
 router = APIRouter(tags=["공정표 · 업체 확정"])
 customer_only = require_role("customer")
 Trade = Literal["dobae", "mokgong"]
+
+
+@router.get(
+    "/projects/{project_id}/expected-plan",
+    response_model=ExpectedStatus,
+    summary="저장된 예상 공정표와 재생성용 버전 조회",
+)
+async def expected_status(
+    project_id: uuid.UUID,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> ExpectedStatus:
+    return await status_for(s, user, project_id)
+
+
+@router.post(
+    "/projects/{project_id}/expected-plan/generate",
+    response_model=PlanOut,
+    summary="사용자 집 정보로 LLM이 DB 근거를 선택하고 계산 엔진으로 예상 공정표 생성",
+)
+async def generate_plan(
+    project_id: uuid.UUID,
+    data: GenerateInput,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> PlanOut:
+    user_id = user.id
+    # 인증 조회가 연 트랜잭션도 LLM 대기 전에 반환한다.
+    await s.close()
+    await ratelimit.hit(
+        ratelimit.key("schedule_generate", str(user_id)),
+        10,
+        3600,
+        "공정표 생성 요청이 많아요. 잠시 뒤 다시 시도해 주세요.",
+    )
+    return await generate(user_id, project_id, data, today_seoul())
 
 
 @router.get(

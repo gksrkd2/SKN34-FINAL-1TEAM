@@ -61,7 +61,7 @@ export function PlanLegend({ plan }: { plan: ApiPlan }) {
     <ul className={s.legend}>
       {has("mokgong") ? <li><span aria-hidden="true" className={s.strong} />목공</li> : null}
       {has("dobae") ? <li><span aria-hidden="true" className={s.pastel} />도배</li> : null}
-      <li><span aria-hidden="true" className={s.soft} />건조 · 고객이 하는 일</li>
+      {plan.blocks.some((b) => b.kind !== "work") ? <li><span aria-hidden="true" className={s.soft} />건조 · 고객이 하는 일</li> : null}
       {plan.days.some((d) => d.kind === "off") ? <li><span aria-hidden="true" className={s.offKey} />휴일</li> : null}
     </ul>
   );

@@ -279,6 +279,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/expected-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 저장된 예상 공정표와 재생성용 버전 조회 */
+        get: operations["expected_status_projects__project_id__expected_plan_get"];
+        put?: never;
+        /** 사용자 물량·인원과 DB 품으로 예상 공정표 생성 */
+        post: operations["measured_plan_projects__project_id__expected_plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/expected-plan/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 사용자 집 정보로 LLM이 DB 근거를 선택하고 계산 엔진으로 예상 공정표 생성 */
+        post: operations["generate_plan_projects__project_id__expected_plan_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/expected-plan/inputs": {
         parameters: {
             query?: never;
@@ -290,23 +325,6 @@ export interface paths {
         get: operations["measured_inputs_projects__project_id__expected_plan_inputs_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{project_id}/expected-plan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 사용자 물량·인원과 DB 품으로 예상 공정표 생성 */
-        post: operations["measured_plan_projects__project_id__expected_plan_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1869,6 +1887,16 @@ export interface components {
             /** Trades */
             trades: components["schemas"]["MeasuredTrade"][];
         };
+        /** ExpectedStatus */
+        ExpectedStatus: {
+            /** Version */
+            version: number;
+            plan: components["schemas"]["PlanOut"] | null;
+            /** Final Version */
+            final_version: number;
+            /** Has Deals */
+            has_deals: boolean;
+        };
         /**
          * ExtraIn
          * @description 업체가 추가 금액 알리기. 한 번 올리면 고치지 않는다(잘못 올렸으면 새로 올린다).
@@ -2017,6 +2045,15 @@ export interface components {
              * @description 뒤 공정 시작 전 마지막 일하는 날
              */
             end_by: string | null;
+        };
+        /** GenerateInput */
+        GenerateInput: {
+            /** Seen Version */
+            seen_version: number;
+            /** Start */
+            start?: string | null;
+            /** Mokgong Items */
+            mokgong_items?: ("flatten" | "insulation" | "door_frame" | "door" | "molding" | "base")[] | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2366,8 +2403,6 @@ export interface components {
             trade: "dobae" | "mokgong";
             /** Crew */
             crew: number;
-            /** Wait Days */
-            wait_days: number;
             /** Items */
             items: components["schemas"]["MeasuredItem"][];
         };
@@ -5280,7 +5315,7 @@ export interface operations {
             };
         };
     };
-    measured_inputs_projects__project_id__expected_plan_inputs_get: {
+    expected_status_projects__project_id__expected_plan_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -5297,7 +5332,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReferenceOption"][];
+                    "application/json": components["schemas"]["ExpectedStatus"];
                 };
             };
             /** @description Validation Error */
@@ -5333,6 +5368,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlanOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_plan_projects__project_id__expected_plan_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GenerateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    measured_inputs_projects__project_id__expected_plan_inputs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferenceOption"][];
                 };
             };
             /** @description Validation Error */

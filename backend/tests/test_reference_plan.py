@@ -63,7 +63,6 @@ def request_body():
             {
                 "trade": "dobae",
                 "crew": 2,
-                "wait_days": 0,
                 "items": [
                     {
                         "record_key": "UP-S15-R00250",
@@ -97,7 +96,9 @@ def test_expected_requires_user_values_and_preserves_source_snapshot(api):
     assert r.status_code == 200, r.text
     plan = r.json()
     assert plan["work_days"] == 2 and plan["blocks"][0]["crew"] == 2
-    assert plan["formula_version"] == "image-2026.11.12"
+    assert plan["formula_version"] == "image-2026.11.12-v2"
+    assert all(b["kind"] == "work" for b in plan["blocks"])
+    assert "wait_days" not in plan["basis"]["trades"][0]
     assert plan["basis"]["trades"][0]["items"][0]["record_key"] == "UP-S15-R00250"
     assert api.get(f"/projects/{pid}/plan?kind=expected").json() == plan
     assert api.post(f"/projects/{pid}/expected-plan", json=data).status_code == 409
@@ -227,3 +228,12 @@ def test_mixed_primary_occupations_are_not_divided_by_one_crew(api):
     response = api.post(f"/projects/{pid}/expected-plan", json=data)
     assert response.status_code == 422, response.text
     assert response.json()["error"]["code"] == "occupation_crew_required"
+
+
+def test_expected_rejects_removed_wait_input(api):
+    pid = setup(api)
+    seed()
+    for wait in (0, 2):
+        data = request_body()
+        data["trades"][0]["wait_days"] = wait
+        assert api.post(f"/projects/{pid}/expected-plan", json=data).status_code == 422

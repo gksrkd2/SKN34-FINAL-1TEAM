@@ -2,12 +2,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { FinalPlan } from "@/components/plan/FinalPlan";
 import type { PlanContact } from "@/components/plan/PlanContacts";
-import { PlanRedo } from "@/components/project/PlanRedo";
+import { ExpectedPlanGenerate } from "@/components/project/ExpectedPlanGenerate";
 import { PlanTabs } from "@/components/project/PlanTabs";
 import { PlanBars, PlanDays, PlanLegend } from "@/components/project/PlanViews";
 import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { getMyProject } from "@/lib/api/project";
-import { getOverview, getPlan, getSchedule, type ApiSchedule } from "@/lib/api/schedule";
+import { getExpectedStatus, getOverview, getPlan, getSchedule, type ApiSchedule } from "@/lib/api/schedule";
 import { listProjectVisits } from "@/lib/api/visit";
 import { projectTitle, TRADE_ORDER } from "@/lib/labels";
 import { dateSeoul, dotDate, md, todaySeoul } from "@/lib/format";
@@ -31,9 +31,17 @@ export default async function PlanPage({ params, searchParams }: { params: Promi
   const { id } = await params;
   const { kind } = await searchParams;
   const want = kind === "expected" ? "expected" : undefined;
-  const [p, plan] = await Promise.all([getMyProject(id), getPlan(id, want)]);
-  if (!p || !plan) notFound();
+  const [p, expected] = await Promise.all([getMyProject(id), getExpectedStatus(id)]);
+  if (!p || !expected) notFound();
+  const plan = want !== "expected" && expected.final_version > 0 ? await getPlan(id, "final") : expected.plan;
   const title = projectTitle(p.region, TRADE_ORDER.filter((t) => p.trades[t]));
+  if (!plan) return <main id="main">
+    <ProjectCrumb id={id} title={title} here="예상 공정표" />
+    <section className="mj-wrap">
+      <h1 className="mj-h1">예상 공정표</h1>
+      <ExpectedPlanGenerate id={id} version={expected.version} start={p.when.kind === "date" ? p.when.start ?? "" : ""} today={todaySeoul()} locked={expected.has_deals} mokgongItems={p.trades.mokgong?.items} />
+    </section>
+  </main>;
   if (plan.kind === "final") {
     // 공사 전에 할 일: 체크 목록 · 시작일은 한 공사 화면 API 값 (시작일은 그 공정표가 확정일 때만)
     const [sch, ov] = await Promise.all([getSchedule(id), getOverview(id)]);
@@ -42,12 +50,11 @@ export default async function PlanPage({ params, searchParams }: { params: Promi
   }
   // 예상 공정표를 골라 봤는데 수락한 날짜가 있으면 확정 공정표로 돌아가는 링크를 둔다.
   // 업체를 확정한 공정이 있으면(다시 고른 것 빼고) 날짜 바꿔 보기를 막는다(서버도 409로 막는다).
-  const sch = await getSchedule(id);
-  const hasFinal = want === "expected" && (sch?.final_version ?? 0) > 0;
-  const dealt = (sch?.trades.length ?? 0) > 0;
+  const hasFinal = want === "expected" && expected.final_version > 0;
+  const dealt = expected.has_deals;
   const works = plan.blocks.filter((b) => b.kind === "work");
   const workEnd = works.at(-1)?.end ?? plan.end;
-  const dry = plan.blocks.find((b) => b.kind === "dry");
+  const basis = plan.basis ?? {};
 
   return (
     <main id="main">
@@ -64,6 +71,7 @@ export default async function PlanPage({ params, searchParams }: { params: Promi
           <p className={`mj-num ${s.line}`}>
             <span>일하는 날 <b>{plan.work_days}일</b> · <b>{md(plan.start)} ~ {md(workEnd)}</b></span>
           </p>
+          <p className="mj-small">{works.map((b) => `${b.label} 약 ${b.days}일`).join(" → ")}</p>
         </div>
         <Link className="mj-btn mj-btn-pri" href={`/projects/${id}/vendors`}>업체 고르기</Link>
       </div>
@@ -80,13 +88,26 @@ export default async function PlanPage({ params, searchParams }: { params: Promi
       <div className={`mj-wrap ${s.bottom}`}>
         <div className={s.left}>
           <p className="mj-small">
-            {plan.weekend_work ? "주말에도 일하고 공휴일만 쉬어요." : "주말 · 공휴일은 쉬어요."}
-            {dry ? ` 도배 뒤 ${dry.days}일 동안 창문을 닫고 말려요.` : ""}
+            토요일에는 작업하고 일요일에는 쉬어요. 공휴일에는 목공만 쉬어요.
           </p>
           <p className="mj-small">예상 일정이에요. 업체를 확정하고 업체가 공사 날짜를 올리면 확정 공정표로 바뀌어요.</p>
+          {basis.mode === "reference" ? <>
+            <p className="mj-small">참고 평면도: {String(basis.apartment_type)} · 예시 물량을 사용한 참고 일정이에요.</p>
+            <p className="mj-small">{String(basis.notice)}</p>
+            {Array.isArray(basis.assumptions) ? basis.assumptions.map((value, index) => {
+              const assumption = value as { task?: string; name?: string; crew?: number; reason?: string };
+              return <p className="mj-small" key={index}>{assumption.name ?? "작업"} 인원 가정값: {assumption.crew}명 · {assumption.reason}</p>;
+            }) : null}
+            {Array.isArray(basis.quantity_assumptions) ? basis.quantity_assumptions.map((value, index) => {
+              const assumption = value as { name?: string; quantity?: string; unit?: string; reason?: string };
+              return <p className="mj-small" key={index}>{assumption.name} 물량 가정값: {assumption.quantity}{assumption.unit === "ea" ? "개" : "㎡"} · {assumption.reason}</p>;
+            }) : null}
+            <p className="mj-small">{String(basis.scope_notice)}</p>
+            <p className="mj-small">{basis.quantity_basis === "exclusive_scaled" ? "입력한 전용면적 비율로 참고 물량을 환산했어요." : "공급면적·평형을 전용면적으로 임의 환산하지 않고 선택한 예시 물량을 사용했어요."}</p>
+          </> : null}
         </div>
         <div className={s.right}>
-          <PlanRedo id={id} start={plan.start} weekend={plan.weekend_work} today={todaySeoul()} locked={dealt} />
+          <ExpectedPlanGenerate id={id} version={plan.version} start={plan.start} today={todaySeoul()} locked={dealt} mokgongItems={Array.isArray(basis.mokgong_items) ? basis.mokgong_items as string[] : p.trades.mokgong?.items} />
         </div>
       </div>
     </main>

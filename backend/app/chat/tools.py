@@ -4,6 +4,20 @@ from app.agent.schemas import TurnContext
 from app.db import SessionLocal
 
 
+async def search_schedule_references(ctx: TurnContext, start, apartment_type):
+    from app.schedule.generation import reference_candidates
+
+    async with SessionLocal() as session:
+        return await reference_candidates(session, ctx, start, apartment_type)
+
+
+async def calculate_schedule_references(ctx, start, context, candidates, selection):
+    from app.schedule.generation import prepare
+
+    async with SessionLocal() as session:
+        return await prepare(session, ctx, start, context, candidates, selection)
+
+
 async def read_schedule(ctx: TurnContext) -> dict | None:
     from app.schedule.expected import agent_context
 

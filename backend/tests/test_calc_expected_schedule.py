@@ -1,4 +1,4 @@
-"""이미지 산식: 합산 후 한 번 올림하고 대기와 공종별 휴일을 구분한다."""
+"""이미지 산식: 합산 후 한 번 올림하고 공종별 휴일을 적용하며 대기 구간은 만들지 않는다."""
 
 from datetime import date
 from decimal import Decimal
@@ -33,21 +33,22 @@ def test_invalid_crew_is_rejected(crew):
         calc.work_duration([item()], crew)
 
 
-def test_trade_calendars_wait_and_order_are_explicit():
+def test_trade_calendars_and_order_do_not_add_wait_blocks():
     assert hasattr(calc, "expected_plan"), "공종별 달력이 필요해요"
     trades = [
-        calc.ExpectedTrade("dobae", (item("1", "1"),), 1, wait_days=2),
+        calc.ExpectedTrade("dobae", (item("1", "1"),), 1),
         calc.ExpectedTrade("mokgong", (item("1", "1"),), 1),
     ]
-    # 금요일 휴일에는 목공을 쉬고 토요일 작업 → 일요일 대기 → 월요일 도배 → 이틀 대기
+    # 금요일 휴일에는 목공을 쉬고 토요일 작업 → 일요일 휴무 → 월요일 도배
     plan = calc.expected_plan(trades, date(2026, 12, 25), {date(2026, 12, 25)})
     work = [b for b in plan.blocks if b.kind == "work"]
     assert [(b.trade, b.start, b.end) for b in work] == [
         ("mokgong", date(2026, 12, 26), date(2026, 12, 26)),
         ("dobae", date(2026, 12, 28), date(2026, 12, 28)),
     ]
-    assert plan.work_days == 2 and plan.end == date(2026, 12, 30)
-    assert [d.kind for d in plan.days][-2:] == ["dry", "dry"]
+    assert plan.work_days == 2 and plan.end == date(2026, 12, 28)
+    assert all(b.kind == "work" for b in plan.blocks)
+    assert all(d.kind in ("work", "off") for d in plan.days)
 
 
 def test_wallpaper_works_on_holiday_but_not_sunday():
@@ -69,9 +70,7 @@ def test_empty_duplicate_unsupported_or_excessive_input_is_rejected():
         with pytest.raises(ValueError):
             calc.expected_plan(trades, date(2026, 1, 1))
     with pytest.raises(ValueError):
-        calc.expected_plan(
-            [calc.ExpectedTrade("dobae", (item(),), 2, wait_days=2000)], date(2026, 1, 1)
-        )
+        calc.expected_plan([calc.ExpectedTrade("dobae", (item("1000", "1"),), 1)], date(2026, 1, 1))
 
 
 def test_saturday_holidays_are_present_in_calendar_data():

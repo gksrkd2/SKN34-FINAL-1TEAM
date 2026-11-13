@@ -219,7 +219,7 @@ async def _save(
 
 async def ensure_expected(s: AsyncSession, p: ProjectOut, today: date) -> Plan:
     prev = await _latest(s, p.id, "expected")
-    if prev and prev.formula_ver == "image-2026.11.12":
+    if prev and prev.formula_ver.startswith(("image-", "reference-")):
         if prev.project_rev != p.rev:
             from app.schedule.expected import missing
 
@@ -314,7 +314,7 @@ async def redo(
     if await s.scalar(dealt) is not None:
         raise AppError(409, "dates_locked", REDO_LOCKED)
     prev = await _latest(s, p.id, "expected")
-    if prev and prev.formula_ver == "image-2026.11.12":
+    if prev and prev.formula_ver.startswith(("image-", "reference-")):
         from app.schedule.expected import missing
 
         raise missing()
