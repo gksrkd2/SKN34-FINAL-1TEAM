@@ -105,6 +105,48 @@ def test_other_trade_question_is_answered_by_that_trade():
     assert any(s.source == "card" and s.trade == "floor" for s in a.sections)
 
 
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ("거주 중이에요", "가구"),
+        ("모르겠어요", "발생 시점"),
+        ("있어요", "바탕 상태"),
+        ("곰팡이는 없어요", "발생 시점"),
+    ],
+)
+def test_lifting_asks_once_and_uses_the_follow_up(reply, expected):
+    first = turn("벽지가 들떠요", view="standard", facts=FACTS)
+    assert first.answer.ask and first.answer.ask.slot == "dobae.mold"
+    answer = turn(reply, view="standard", facts=FACTS, waiting=first.waiting)
+    assert answer.answer.trace.trades == ["dobae"]
+    assert not answer.answer.ask and not answer.waiting
+    assert expected in words(answer.answer)
+    assert any(s.sources for s in answer.answer.sections)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "곰팡이 핀 벽지 위에 덧붙여도 되나요?",
+        "곰팡이 핀 벽지 위에 새 벽지를 덧붙이면 안 돼요?",
+    ],
+)
+def test_mold_overlay_checks_the_wall_before_wallpapering(question):
+    answer = turn(question, view="standard", facts=FACTS).answer
+    assert answer.trace.route == "trade"
+    assert "바탕 상태" in words(answer)
+    assert any(c.startswith("card:dobae.defect.mold-redo@") for c in answer.trace.cards)
+    assert not answer.ask
+
+
+def test_preparation_uses_project_living_and_wall_scope():
+    facts = FACTS.model_copy(update={"living": "living", "brief": {"dobae.ceiling": "벽만 해요"}})
+    answer = turn("거주 중 도배하려면 뭘 준비해요?", view="standard", facts=facts).answer
+    assert "시공할 벽 앞 가구" in words(answer)
+    assert "보양" in words(answer)
+    assert answer.calc and not answer.ask
+
+
 def test_out_of_scope_and_knowledge_trade_calc_requests():
     a = turn("로또 번호 알려줘").answer
     assert a.trace.route == "out_of_scope" and not a.trace.cards

@@ -7,10 +7,26 @@
 - 하지 않는 일: 하자 판정, 브랜드 · 업체 추천, 10공종 금액, 다른 공종 부르기(필요하면 관문이 multi로 정함).
 """
 
+import re
+
 from app.agent.v3 import templates
 from app.agent.v3.answer import KB, Part, Task, calc_box, drop_promise, knowledge
 from app.agent.v3.schemas import Choice, UiCard
 from app.agent.v3.trades import BY_CODE
+
+LIFTING = "dobae.defect.lifting"
+MOLD_REDO = "dobae.defect.mold-redo"
+LIVING_PREP = "dobae.price.living-in"
+LIFTED = re.compile(r"들뜨|들떠|들뜸|들뜬|들떴")
+WET = re.compile(
+    r"곰팡이\s*(?:핀|[이가은는]?\s*(?:펴|폈|피었|있|보여))|"
+    r"(?:물자국|결로)[이가은는]?\s*(?:있|보여|생겨)|물이\s*맺|젖어"
+)
+DRY = re.compile(r"(?:곰팡이|물자국|결로)[이가은는]?\s*(?:없|안\s*보여)")
+OVERLAY = re.compile(r"덧방|덧\s*붙|(?:위에|겹쳐).{0,20}(?:붙|바르|발라|덮)")
+LIVING = re.compile(r"거주\s*중|살면서|거주하면서|살고\s*있|이사\s*안\s*나가")
+VACANT = re.compile(r"빈\s*집|공실|짐[이은]?\s*없")
+MOLD_YES = re.compile(r"(?:네|예|있어요|있습니다|있어)[.!\s]*")
 
 
 def primary(task: Task) -> str:
@@ -72,7 +88,47 @@ def run(task: Task, kb: KB) -> Part:
     q = task.text
     if task.slot and task.value:  # 되물은 칸의 답: 원래 질문 + 고른 값으로 다시 찾는다
         q = f"{task.asked} {task.value}".strip()
-    how = knowledge(part, kb, q, trade=code, route="trade", facts=facts, policy=task.policy)  # type: ignore[arg-type]
+    card_id = None
+    wet = dry = False
+    if code == "dobae":
+        wet, dry = bool(WET.search(q)), bool(DRY.search(q))
+        lifting = LIFTED.search(task.asked or task.text)
+        if wet and (lifting or OVERLAY.search(q)):
+            card_id = MOLD_REDO
+        elif task.slot == "dobae.mold" and lifting:
+            card_id = MOLD_REDO if MOLD_YES.fullmatch(task.value or "") else LIFTING
+
+    how = knowledge(
+        part,
+        kb,
+        q,
+        trade=code,
+        route="trade",
+        facts=facts,
+        policy=task.policy,
+        card_id=card_id,
+        original=q if task.slot else task.asked or q,
+        today=task.ctx.today,
+    )  # type: ignore[arg-type]
+    if code == "dobae":
+        selected = {tag.split("@")[0] for tag in part.used_cards}
+        if part.ask and (
+            (part.ask.slot == "dobae.mold" and (wet or dry))
+            or (part.ask.slot == "dobae.living" and (LIVING.search(q) or VACANT.search(q)))
+        ):
+            part.ask = None
+        if (f"card:{LIVING_PREP}" in selected or task.slot == "dobae.mold") and (
+            LIVING.search(q) or (facts and facts.living == "living" and not VACANT.search(q))
+        ):
+            wall_only = facts and facts.brief.get("dobae.ceiling") == "벽만 해요"
+            place = "시공할 벽 앞" if wall_only else "도배할 공간의"
+            prep = f"{place} 가구를 어디로 옮길지 업체와 미리 정해요."
+            part.add(
+                templates.section(
+                    [prep], title="[거주 중 도배 준비]", route="trade", trade="dobae"
+                ),
+                prep,
+            )
     if task.slot:
         part.ask = None  # 한 칸은 한 번만 묻는다(되묻기 반복 막기)
     if how == "unknown" and lines:
