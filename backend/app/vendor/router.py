@@ -26,6 +26,7 @@ from app.vendor.schemas import (
     PricesOut,
     ProfileIn,
     ProfileOut,
+    PublicDobaeDetailOut,
     ReapplyIn,
     ResubmitIn,
     ReviewIn,
@@ -40,6 +41,19 @@ from app.vendor.schemas import (
 router = APIRouter(tags=["업체"])
 admin_only = require_role("admin")
 vendor_only = require_role("vendor")
+
+
+@router.get(
+    "/vendors/{vendor_id}",
+    response_model=PublicDobaeDetailOut,
+    summary="도배 업체 공개 상세 (지역·프로젝트 무관, 고객)",
+)
+async def public_dobae_vendor(
+    vendor_id: uuid.UUID,
+    _user: User = Depends(require_role("customer")),
+    s: AsyncSession = Depends(get_session),
+) -> PublicDobaeDetailOut:
+    return await service.public_dobae_detail(s, vendor_id)
 
 
 @router.post(

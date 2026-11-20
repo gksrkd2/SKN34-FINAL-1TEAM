@@ -5,7 +5,7 @@
 """
 
 from app.agent.v3 import templates
-from app.agent.v3.answer import KB, Part, Task, calc_box, drop_promise, knowledge
+from app.agent.v3.answer import KB, Part, Task, calc_box, drop_promise, knowledge, vendor_lookup
 from app.agent.v3.schemas import UiCard
 
 GENERAL_PRICE = (
@@ -14,6 +14,8 @@ GENERAL_PRICE = (
 
 
 def run(task: Task, kb: KB) -> Part:
+    if "vendor_lookup" in task.policy:
+        return vendor_lookup(task)
     part = Part(route="guide", trade="common")
     f = task.facts
     flags = set(task.policy)

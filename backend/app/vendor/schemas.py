@@ -450,6 +450,12 @@ class PublicProfileOut(PublicCardOut):
     updated_at: datetime | None
 
 
+class PublicDobaeDetailOut(PublicProfileOut):
+    """공사·지역에 묶이지 않는 도배 업체 공개 상세. 비공개 연락처는 포함하지 않는다."""
+
+    intro: str | None = None
+
+
 class ProfileOut(PublicProfileOut):
     """업체 본인이 보는 업체 정보 (고치는 화면)"""
 

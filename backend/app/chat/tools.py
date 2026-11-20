@@ -20,8 +20,10 @@ from app.agent.v3.schemas import (
     PlanBlockFact,
     PlanFacts,
     ProjectFacts,
+    PublicVendorFact,
     StandardFacts,
     StandardLineFact,
+    VendorAvailability,
     VendorRangeFact,
     VisitDraftFacts,
     VisitRecommendFact,
@@ -30,11 +32,46 @@ from app.agent.v3.templates import md
 from app.auth.models import User
 from app.shared.clock import now_utc
 from app.shared.errors import AppError
+from app.shared.regions import is_region
 
 STATES = {"included", "bundled", "separate", "optional", "after_visit", "excluded"}
 TRADES = {"dobae", "mokgong"}
 # overview_for phase → 에이전트 단계(다음 할 일 버튼)
 PHASE = {"estimate": "standard", "progress": "visit", "work": "construction", "done": "done"}
+
+
+async def public_vendor_mentions(
+    s: AsyncSession, text: str, screen: str | None = None, ids: Sequence[str] = ()
+) -> list[PublicVendorFact]:
+    """사용자가 명시했거나 업체 상세 화면에서 보고 있는 공개 도배 업체. 공사·지역 제한 없음."""
+    from app.vendor import service as vendor_service
+
+    profiles = await vendor_service.public_dobae_mentions(s, text)
+    vendor_question = any(
+        w in text for w in ("업체", "어때", "소개", "정보", "상세", "이곳", "여기")
+    )
+    if not profiles and screen == "vendor" and vendor_question:
+        for raw in ids[:5]:
+            try:
+                vendor_id = uuid.UUID(str(raw))
+            except ValueError:
+                continue
+            try:
+                profiles = [await vendor_service.public_dobae_detail(s, vendor_id)]
+            except AppError as exc:
+                if exc.status != 404:
+                    raise
+            if profiles:
+                break
+    return [
+        PublicVendorFact(
+            vendor_id=p.vendor_id,
+            name=p.biz_name or "업체",
+            areas=[a.label for a in p.areas],
+            intro=p.intro,
+        )
+        for p in profiles
+    ]
 
 
 async def project_facts(
@@ -56,6 +93,10 @@ async def project_facts(
         living="living" if getattr(p, "occupied", False) else "vacant",
         start_wish=p.when.start if p.when else None,
     )
+    if p.home and p.home.faces == ["wall"]:
+        facts.brief["dobae.ceiling"] = "벽만 해요"
+    elif p.home and "ceiling" in p.home.faces:
+        facts.brief["dobae.ceiling"] = "천장도 해요"
     facts.standard = await _standard(s, user, project_id)
     facts.plan = await _plan(s, user, project_id, today)
     facts.visit_draft = await _visit_draft(s, user, project_id, today)
@@ -65,7 +106,10 @@ async def project_facts(
         d.ranges, d.recommend = picked[0], picked[1]
         d.basis_start = d.basis_start or picked[2]
         facts.visit_draft = d
-    facts.estimates = await _estimates(s, user, project_id)
+    if not is_region(p.sido, p.sgg):
+        facts.dobae_vendors = "missing_region"
+    elif "dobae" in trades:
+        facts.dobae_vendors, facts.estimates = await _dobae_vendors(s, user, project_id)
     stage = await _stage(s, user, project_id, today)
     if stage:
         facts.stage = stage  # type: ignore[assignment]
@@ -82,17 +126,20 @@ async def _stage(s: AsyncSession, user: User, project_id: uuid.UUID, today: date
     return PHASE.get(getattr(o, "phase", ""))
 
 
-async def _estimates(s: AsyncSession, user: User, project_id: uuid.UUID) -> list[EstimateFacts]:
-    """담은 업체(없으면 이 구 업체 앞 3곳)의 가견적 합계. 합계 · 표준 대비 %는 계산 엔진 값 그대로."""
+async def _dobae_vendors(
+    s: AsyncSession, user: User, project_id: uuid.UUID
+) -> tuple[VendorAvailability, list[EstimateFacts]]:
+    """업체 보기와 같은 목록에서 후보 유무와 견적 설명용 가견적을 한 번에 읽는다."""
     from app.visit import service as visit_service
 
     try:
         lst = await visit_service.vendors_for(s, user, project_id, "dobae")
     except AppError:
-        return []
+        return "unavailable", []
+    availability: VendorAvailability = "local" if lst.local else "nearby" if lst.nearby else "empty"
     cards = [*lst.local, *lst.nearby]
     picked = [c for c in cards if c.shortlisted] or cards[:3]
-    return [
+    return availability, [
         EstimateFacts(
             vendor=c.name,
             total=c.estimate_total,

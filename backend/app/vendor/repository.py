@@ -266,6 +266,27 @@ async def approved_ids(
     return list((await s.execute(q.order_by(Vendor.reviewed_at, Vendor.user_id))).scalars().all())
 
 
+async def named_public_dobae_ids(s: AsyncSession, text: str) -> list[uuid.UUID]:
+    """질문에 상호가 나온 공개 도배 업체만 찾는다. 프로젝트·지역 제한은 없다."""
+    q = (
+        select(Vendor.user_id)
+        .where(
+            Vendor.status == "approved",
+            Vendor.suspended_at.is_(None),
+            Vendor.contact_method.is_not(None),
+            Vendor.biz_name.is_not(None),
+            func.length(Vendor.biz_name) >= 2,
+            func.strpos(text, Vendor.biz_name) > 0,
+            select(VendorTrade.vendor_id)
+            .where(VendorTrade.vendor_id == Vendor.user_id, VendorTrade.trade == "dobae")
+            .exists(),
+        )
+        .order_by(func.length(Vendor.biz_name).desc(), Vendor.user_id)
+        .limit(5)
+    )
+    return list((await s.execute(q)).scalars().all())
+
+
 async def price_sets(
     s: AsyncSession, vendor_ids: list[uuid.UUID], trade: str, statuses: tuple[str, ...]
 ) -> list[VendorPriceSet]:

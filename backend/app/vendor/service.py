@@ -79,6 +79,7 @@ from app.vendor.schemas import (
     ProfileIn,
     ProfileOut,
     PublicCardOut,
+    PublicDobaeDetailOut,
     PublicProfileOut,
     ReapplyIn,
     ResubmitIn,
@@ -644,6 +645,26 @@ async def public_profile(s: AsyncSession, vendor_id: uuid.UUID) -> PublicProfile
     if v is None or v.status != "approved":
         raise AppError(404, "not_found", "업체를 찾을 수 없어요.")
     return PublicProfileOut(**await _detail(s, v))
+
+
+async def public_dobae_detail(s: AsyncSession, vendor_id: uuid.UUID) -> PublicDobaeDetailOut:
+    """공사/지역과 독립된 도배 업체 공개 상세. 승인·활성·공종·연락 방식만 검사한다."""
+    if not await repo.approved_ids(s, "dobae", None, None, vendor_id):
+        raise AppError(404, "not_found", "업체를 찾을 수 없어요.")
+    v = await s.get(Vendor, vendor_id)
+    if v is None or v.suspended_at is not None:
+        raise AppError(404, "not_found", "업체를 찾을 수 없어요.")
+    return PublicDobaeDetailOut(
+        **(await public_profile(s, vendor_id)).model_dump(), intro=v.intro or None
+    )
+
+
+async def public_dobae_mentions(s: AsyncSession, text: str) -> list[PublicDobaeDetailOut]:
+    """질문에 상호가 명시된 도배 업체만 공개 정보로 반환. 지역·프로젝트로 좁히지 않는다."""
+    return [
+        await public_dobae_detail(s, vendor_id)
+        for vendor_id in await repo.named_public_dobae_ids(s, text)
+    ]
 
 
 async def listed(s: AsyncSession, vendor_id: uuid.UUID, trade: str, sido: str, sgg: str) -> bool:

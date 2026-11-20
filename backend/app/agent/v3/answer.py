@@ -14,8 +14,10 @@ from app.agent.v3 import check, templates
 from app.agent.v3.schemas import (
     AskSlot,
     CalcBox,
+    Choice,
     PolicyFlag,
     ProjectFacts,
+    PublicVendorFact,
     Route,
     Section,
     Sentence,
@@ -54,6 +56,7 @@ class Task:
     policy: list[PolicyFlag]
     ctx: TurnContext
     facts: ProjectFacts | None = None
+    vendors: list[PublicVendorFact] = field(default_factory=list)
     slot: str | None = None
     value: str | None = None
     asked: str = ""  # 되물은 담당이 남긴 원래 질문(칸 답일 때)
@@ -90,6 +93,45 @@ class Part:
         self.dropped.extend(dropped)
         if kept is not None:
             self.sections.append(kept)
+
+
+def vendor_lookup(task: Task) -> Part:
+    """명시한 도배 업체의 등록된 공개 정보와 상세 경로만 보여준다. 순위·평가·견적은 만들지 않는다."""
+    part = Part(route=task.route, trade=next(iter(task.trades), None))
+    if task.vendors:
+        if len(task.vendors) > 1:
+            line = "여러 업체가 확인됐어요. 확인할 업체의 상세 정보를 선택해 주세요."
+            choices = [
+                Choice(
+                    text=f"{v.name} · {', '.join(v.areas[:2])}",
+                    action=f"vendor_detail:{v.vendor_id}",
+                )
+                for v in task.vendors[:3]
+            ]
+            part.cards.append(UiCard(kind="next_step", choices=choices))
+        else:
+            v = task.vendors[0]
+            lines = [f"{v.name}은 믿집에 등록된 도배 업체예요."]
+            if v.areas:
+                lines.append(f"업체가 등록한 활동 지역은 {', '.join(v.areas)}예요.")
+            if v.intro:
+                lines.append(f"업체 소개: {v.intro}")
+            part.cards.append(
+                UiCard(
+                    kind="next_step",
+                    choices=[
+                        Choice(text=f"{v.name} 상세 보기", action=f"vendor_detail:{v.vendor_id}")
+                    ],
+                )
+            )
+            line = " ".join(lines)
+    elif any(t != "dobae" for t in task.trades):
+        line = "지금 업체 보기 화면에서는 도배 업체를 확인할 수 있어요."
+    else:
+        line = "알아볼 도배 업체 이름을 알려 주세요. 등록된 업체의 공개 정보와 상세 페이지를 확인해 드려요."
+    sentences = lines if task.vendors and len(task.vendors) == 1 else [line]
+    part.add(templates.section(sentences, route=part.route, trade=part.trade), line)
+    return part
 
 
 def accept(

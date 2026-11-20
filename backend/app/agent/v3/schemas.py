@@ -18,7 +18,7 @@ Route = Literal[
     "guide", "trade", "quote_explanation", "schedule", "multi", "out_of_scope", "ask_back"
 ]
 PolicyFlag = Literal[
-    "price", "period", "vendor_reco", "brand_reco", "defect_judgement", "legal_case", "diy",
+    "price", "period", "vendor_lookup", "vendor_reco", "brand_reco", "defect_judgement", "legal_case", "diy",
     "safety", "my_house",
 ]  # fmt: skip
 GateSource = Literal["button", "waiting", "rule", "model"]
@@ -122,6 +122,18 @@ class EstimateFacts(BaseModel):
     separate: list[str] = []  # 따로 받는 줄 이름
 
 
+VendorAvailability = Literal["local", "nearby", "empty", "missing_region", "unavailable"]
+
+
+class PublicVendorFact(BaseModel):
+    """업체 공개 조회 결과. 고객 프로젝트에 종속되지 않으며 민감정보를 넣지 않는다."""
+
+    vendor_id: uuid.UUID
+    name: str
+    areas: list[str] = []
+    intro: str | None = None
+
+
 class ProjectFacts(BaseModel):
     """에이전트에 넘기는 프로젝트 칸. 동 · 호 · 연락처는 넣지 않는다."""
 
@@ -135,6 +147,7 @@ class ProjectFacts(BaseModel):
     standard: StandardFacts | None = None
     plan: PlanFacts | None = None
     visit_draft: VisitDraftFacts | None = None
+    dobae_vendors: VendorAvailability = "unavailable"
     estimates: list[EstimateFacts] = []
     brief: dict[str, str] = {}  # 지금까지 모은 조건(도배 · 목공 브리프 칸)
 

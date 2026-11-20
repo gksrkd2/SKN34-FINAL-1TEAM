@@ -10,7 +10,7 @@
 import re
 
 from app.agent.v3 import templates
-from app.agent.v3.answer import KB, Part, Task, calc_box, drop_promise, knowledge
+from app.agent.v3.answer import KB, Part, Task, calc_box, drop_promise, knowledge, vendor_lookup
 from app.agent.v3.schemas import Choice, UiCard
 from app.agent.v3.trades import BY_CODE
 
@@ -34,6 +34,8 @@ def primary(task: Task) -> str:
 
 
 def run(task: Task, kb: KB) -> Part:
+    if "vendor_lookup" in task.policy:
+        return vendor_lookup(task)
     code = primary(task)
     spec = BY_CODE[code]
     part = Part(route="trade", trade=code)  # type: ignore[arg-type]

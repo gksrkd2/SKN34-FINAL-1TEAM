@@ -171,6 +171,7 @@ async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
         return AiTurnOut.model_validate(old)
     rev, waiting_label = 1, None
     facts = None
+    vendor_mentions = []
     async with SessionLocal() as s:  # 짧게 열고 닫는다. 답을 만드는 동안 세션을 쥐지 않는다
         if body.chat_id is not None:
             chat = await get_for(s, user.id, body.chat_id)
@@ -179,6 +180,9 @@ async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
             facts = await tools.project_facts(
                 s, user, body.context.project_id, today, body.context.ids
             )
+        vendor_mentions = await tools.public_vendor_mentions(
+            s, body.text, body.context.screen, body.context.ids
+        )
     card_set = cards.default()
     unavailable = KB(ix=bm25.build([], {}), cards=card_set, unavailable=True)
     try:
@@ -207,6 +211,7 @@ async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
                 ctx,
                 kb=grounding,
                 facts=facts,
+                vendors=vendor_mentions,
                 waiting=waiting,
                 button=body.button,
             )

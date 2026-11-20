@@ -16,6 +16,7 @@ from app.agent.v3.schemas import (
     AgentAnswer,
     Button,
     ProjectFacts,
+    PublicVendorFact,
     Trace,
     TurnContext,
     UiCard,
@@ -108,6 +109,7 @@ async def run_turn(
     *,
     kb: KB,
     facts: ProjectFacts | None = None,
+    vendors: list[PublicVendorFact] | None = None,
     waiting: dict | None = None,
     button: Button | None = None,
 ) -> TurnResult:
@@ -118,6 +120,16 @@ async def run_turn(
         button=button, has_project=facts is not None,
         ignore=ignore_words(facts),
     )  # fmt: skip
+    if vendors and button is None and not policy.out_of_scope(masked, bool(g.trades)):
+        g = g.model_copy(
+            update={
+                "route": "guide",
+                "trades": ["dobae"],
+                "policy": ["vendor_lookup"],
+                "source": "rule",
+                "confidence": 1.0,
+            }
+        )
     slot = value = None
     asked = ""
     waiting_slot = waiting.get("slot") if waiting else None
@@ -139,6 +151,7 @@ async def run_turn(
         if waiting.get("trade"):
             g = g.model_copy(update={"route": "trade", "trades": [waiting["trade"]]})
     task = Task(text=masked, route=g.route, trades=g.trades, policy=g.policy, ctx=ctx, facts=facts,
+                vendors=vendors or [],
                 slot=slot, value=value, asked=asked)  # fmt: skip
     names: list[str] = []
     failed_parts = 0

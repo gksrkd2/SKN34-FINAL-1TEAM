@@ -678,7 +678,7 @@ class V3Vendor:
 V3_VENDORS = (
     V3Vendor(
         "maru", _mail("maru"), "마루와벽", "이마루", "9990003001", "01000003001", ("dobae",),
-        ("노원구", "도봉구", "강북구", "성북구"), "approved", instant=True,
+        ("노원구", "도봉구", "강북구", "성북구", "구로구"), "approved", instant=True,
         prices=(
             ("putty", "price", 20_000, None), ("paper_hapji", "price", 5_000, None),
             ("paper_silk", "price", 9_500, None), ("material", "price", 13_000, None),
@@ -696,7 +696,7 @@ V3_VENDORS = (
     ),
     V3Vendor(
         "gyeol", _mail("gyeol"), "결도배", "김결", "9990003002", "01000003002", ("dobae",),
-        ("노원구", "도봉구"), "approved",
+        ("노원구", "도봉구", "구로구"), "approved",
         prices=(
             ("putty", "price", 15_000, None), ("paper_hapji", "excluded", None, None),
             ("paper_silk", "price", 9_000, None), ("material", "price", 12_000, None),
@@ -711,7 +711,7 @@ V3_VENDORS = (
     ),
     V3Vendor(
         "hangyeol", _mail("hangyeol"), "한결인테리어", "박한결", "9990003003", "01000003003",
-        ("dobae", "mokgong"), ("노원구",), "approved",
+        ("dobae", "mokgong"), ("노원구", "구로구"), "approved",
         cases=(("공릉동 28평 거실", "거실", 28, "basic"),),
         intro="도배와 목공을 같이 해요. 도배 단가표는 아직 준비 중이에요.",
     ),
@@ -907,6 +907,37 @@ async def _v3_vendor(s, spec: V3Vendor, password: str, admin: User, n: int, toda
         )
     await s.commit()
     return user, True
+
+
+async def build_dobae_vendor_samples(password: str) -> list[tuple[str, uuid.UUID, bool]]:
+    """1-4 업체 이름 조회 시험용: 기존 V3 승인 도배 업체 3곳만 등록. 로컬/테스트 전용·재실행 안전."""
+    if settings.app_env not in DEMO_ENVS:
+        raise SystemExit("시연 데이터는 로컬 개발(APP_ENV=local · test)에서만 만들어요.")
+    await _fresh_redis()
+    try:
+        async with SessionLocal() as s:
+            admin = await auth_repo.user_by_email(s, _mail("admin"))
+            if admin is None:
+                admin = await auth_service.create_user(
+                    s, email=_mail("admin"), name="믿집 관리자", password=password, role="admin"
+                )
+                await s.commit()
+            rows = []
+            for n, spec in enumerate(v for v in V3_VENDORS if v.state == "approved"):
+                vendor, made = await _v3_vendor(s, spec, password, admin, n, today_seoul())
+                # 이미 만든 시연 업체도 새 활동 지역만 추가한다. 기존 지역/공종/프로필은 그대로 둔다.
+                if not made:
+                    _, registered = await vendor_repo.trades_and_areas(s, [vendor.id])
+                    existing = set(registered[vendor.id])
+                    for sgg in spec.areas:
+                        if ("seoul", sgg) not in existing:
+                            s.add(VendorArea(vendor_id=vendor.id, sido="seoul", sgg=sgg))
+                    await s.commit()
+                rows.append((spec.biz, vendor.id, made))
+            return rows
+    finally:
+        await engine.dispose()
+        await _fresh_redis()
 
 
 @dataclass
@@ -1350,6 +1381,10 @@ def main(argv: list[str] | None = None) -> None:
     password = demo_password()  # 로컬 · 테스트가 아니면 여기서 멈춘다
     if len(password) < 8:
         raise SystemExit("DEMO_PASSWORD는 8자 이상이어야 해요.")
+    if "--vendors-only" in argv:
+        for name, vendor_id, made in asyncio.run(build_dobae_vendor_samples(password)):
+            print(f"{'추가' if made else '기존'}: {name} · /vendors/{vendor_id}")
+        return
     if "--v2" in argv:
         made = asyncio.run(build(password, today_seoul()))
         for stage, label in LABEL.items():

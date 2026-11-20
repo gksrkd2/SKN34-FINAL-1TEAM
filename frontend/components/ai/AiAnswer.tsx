@@ -36,6 +36,11 @@ function Choices({ choices, projectId, onPick }: { choices: AiChoice[]; projectI
   return (
     <div className={s.choices}>
       {choices.map((c, i) => {
+        const vendor = /^vendor_detail:([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i.exec(c.action ?? "");
+        if (vendor) {
+          const from = projectId ? `?project=${encodeURIComponent(projectId)}` : "";
+          return <Button key={i} variant="secondary" size="sm" href={`/vendors/${vendor[1]}${from}`}>{c.text}</Button>;
+        }
         if (c.action && ACTION_PATH[c.action]) {
           return <Button key={i} variant="secondary" size="sm" href={ACTION_PATH[c.action](projectId)}>{c.text}</Button>;
         }
