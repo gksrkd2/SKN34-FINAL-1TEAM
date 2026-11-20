@@ -136,7 +136,15 @@ def run(task: Task, kb: KB) -> Part:
     )
     # 줄 풀이에 이어 용어 · 견적 읽기 카드가 맞으면 붙인다(모름 문장은 붙이지 않음: 이미 계산으로 답함)
     how = knowledge(
-        part, kb, q, trade=trade, route="quote_explanation", facts=f, allow_extract=False
+        part,
+        kb,
+        q,
+        trade=trade,
+        route="quote_explanation",
+        facts=f,
+        allow_extract=False,
+        original=task.asked or task.text,
+        today=task.ctx.today,
     )
     if how == "unknown":
         part.unknown = []

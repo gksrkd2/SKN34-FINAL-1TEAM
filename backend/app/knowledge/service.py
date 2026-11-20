@@ -24,6 +24,11 @@ async def index(s: AsyncSession) -> bm25.Index:
     return (await _index(s))[0]
 
 
+async def is_current(s: AsyncSession, ix: bm25.Index) -> bool:
+    versions = await repository.active_versions(s)
+    return ix.version == ",".join(sorted(str(v) for v, _ in versions))
+
+
 async def _index(s: AsyncSession) -> tuple[bm25.Index, list[uuid.UUID]]:
     """키워드 색인과 그 색인을 만든 활성 버전 id들"""
     global _cache

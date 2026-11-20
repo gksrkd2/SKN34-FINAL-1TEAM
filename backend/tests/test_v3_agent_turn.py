@@ -393,3 +393,43 @@ def test_receipt_and_tax_invoice_questions_get_common_contract_cards(text, card)
 
 def test_paying_through_mitjip_is_still_out_of_scope():
     assert turn("믿집에서 카드 결제 돼요?").answer.trace.route == "out_of_scope"
+
+
+def test_empty_index_does_not_publish_static_card_db_citations():
+    from app.agent.v3.answer import KB as Knowledge
+    from app.knowledge import bm25
+
+    kb = Knowledge(ix=bm25.build([], {}), cards=KB.cards)
+    ans = asyncio.run(run_turn("합지랑 실크 중에 뭐로 해야 해요?", CTX, kb=kb)).answer
+    assert ans.sections or ans.unknown
+    assert ans.trace.chunks == []
+    assert not any(s.sources for s in ans.sections)
+    assert not any(c.startswith("K") for s in ans.sections for x in s.sentences for c in x.cites)
+
+
+def test_llm_drops_claim_with_unprovided_citation_and_uncomputed_amount(llm_stub):
+    sec = Section(
+        sentences=[Sentence(text="자료 글", cites=["K736"])], source="extract", route="trade"
+    )
+    llm_stub(
+        {
+            "sentences": [
+                {"text": "합지는 종이 벽지예요.", "cites": ["K736"]},
+                {"text": "항균 성능이 보장된대요.", "cites": ["K99999"]},
+                {"text": "소음 저감 장치를 새로 설치해야 해요.", "cites": ["K736"]},
+                {"text": "시공비가 50000원이에요.", "cites": ["K736"]},
+            ]
+        }
+    )
+    new, dropped = asyncio.run(
+        llm_mode.rewrite(
+            sec,
+            route="trade",
+            question="합지 어때요?",
+            calc="",
+            evidence={"K736": "합지는 종이 벽지예요. 50000원 예시."},
+        )
+    )
+    assert new is not None
+    assert [x.text for x in new.sentences] == ["합지는 종이 벽지예요."]
+    assert len(dropped) == 3

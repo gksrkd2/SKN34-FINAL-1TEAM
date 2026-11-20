@@ -21,6 +21,7 @@ from app.agent.v3.schemas import (
     UiCard,
 )
 from app.agent.v3.trades import BY_CODE, trades_in
+from app.knowledge import extract
 
 CHITCHAT = re.compile(r"로또|주식|코인|집값|영화|점심|저녁\s*뭐|강아지|번역|날씨|심심|노래|게임")
 
@@ -65,7 +66,18 @@ def _out(text: str, flags: list[str], facts: ProjectFacts | None) -> Part:
 async def _llm(part: Part, kb: KB, question: str) -> tuple[Part, list[str]]:
     """카드 · 조각 묶음만 다시 쓴다. 점수 높은 카드 · 정해 둔 글 · 계산 묶음은 그대로(카드 먼저)."""
     used: list[str] = []
-    calc = " ".join(f"{c.label} {c.qty or ''}{c.unit} {c.amount or ''} {c.note}" for c in part.calc)
+    calc = " ".join(
+        " ".join(
+            [
+                c.label,
+                f"{c.qty}{c.unit}" if c.qty is not None else "",
+                f"{c.amount}원" if c.amount is not None else "",
+                f"{c.unit_price}원" if c.unit_price is not None else "",
+                c.note,
+            ]
+        )
+        for c in part.calc
+    )
     out = []
     for sec in part.sections:
         tag = next((c for x in sec.sentences for c in x.cites if c.startswith("card:")), None)
@@ -73,7 +85,12 @@ async def _llm(part: Part, kb: KB, question: str) -> tuple[Part, list[str]]:
             out.append(sec)
             continue
         refs = {c for x in sec.sentences for c in x.cites if c.startswith("K")}
-        evidence = {r: kb.ix.by_ref[r].chunk.text for r in refs if r in kb.ix.by_ref}
+        evidence = {r: kb.ix.by_ref[r].chunk.text for r in sorted(refs) if r in kb.ix.by_ref}
+        if not evidence or any(
+            extract.display_of(kb.ix.by_ref[r].doc.kind) == "none" for r in evidence
+        ):
+            out.append(sec)
+            continue
         new, dropped = await llm_mode.rewrite(
             sec, route=sec.route, question=question, evidence=evidence, calc=calc
         )

@@ -115,7 +115,7 @@ def run(task: Task, kb: KB) -> Part:
     )
     # 순서 · 준비 질문이면 공통 카드를 덧붙인다(숫자 없음). 모름 문장은 붙이지 않는다
     how = knowledge(part, kb, task.text, trade=task.trades[0] if task.trades else None, route="schedule",
-                    facts=task.facts, allow_extract=False)  # fmt: skip
+                    facts=task.facts, allow_extract=False, original=task.asked or task.text, today=task.ctx.today)  # fmt: skip
     if how == "unknown":
         part.unknown = []
     return part

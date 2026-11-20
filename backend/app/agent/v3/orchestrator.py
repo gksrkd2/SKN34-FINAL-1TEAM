@@ -11,12 +11,14 @@
 
 import itertools
 import re
+from datetime import date
 
 from app.agent.v3 import gate as gate_mod
 from app.agent.v3 import guide, quote_explain, schedule_agent, templates, trade_agent
 from app.agent.v3.answer import KB, Part, Task
 from app.agent.v3.schemas import Route, Section, Sentence, TradeCode
 from app.agent.v3.trades import BY_CODE, ORDER_CITES, ORDER_RULES, mention_spans, rules, trades_in
+from app.knowledge import search3
 
 MAX_PARTS = 3
 # 공사 순서 · 같이 하기를 묻는 말. 없으면 순서 문장을 붙이지 않아요('뭐가 더 쉬워요?'에 순서는 딴말)
@@ -48,7 +50,7 @@ def split(task: Task) -> list[Task]:
                 out.extend(_per_trade(task, p, tr, g.policy))
             else:
                 out.append(Task(text=p, route=route, trades=tr[:1] if route == "trade" else tr,
-                                policy=g.policy, ctx=task.ctx, facts=task.facts))  # fmt: skip
+                                policy=g.policy, ctx=task.ctx, facts=task.facts, asked=task.text))  # fmt: skip
     else:
         out.extend(_per_trade(task, task.text, task.trades, task.policy))
     if not out:
@@ -109,7 +111,9 @@ def _order_key(i: int, p: Part) -> tuple:
     return (1, 0, i)
 
 
-def order_section(pair: tuple[str, str], kb: KB | None) -> Section | None:
+def order_section(
+    pair: tuple[str, str], kb: KB | None, *, asked: str = "", today: date | None = None
+) -> Section | None:
     """공종 쌍의 순서 문장. 근거는 계산 엔진 순서 규칙(rule:) · 지식 조각이고 출처 칸에도 붙인다."""
     text = ORDER_RULES.get(pair)
     if not text:
@@ -117,21 +121,30 @@ def order_section(pair: tuple[str, str], kb: KB | None) -> Section | None:
     cites = list(ORDER_CITES.get(pair, ()))
     rs = rules()
     sources = []
+    restriction = search3.limits(asked, today)
     for c in cites:
-        if c in rs:
+        if c in rs and not (restriction.kinds or restriction.dated):
             sources.append({"ref": c, "title": rs[c]["title"], "kind": "rule", "publisher": "믿집"})
-        elif kb is not None and c in kb.ix.by_ref:
-            it = kb.ix.by_ref[c]
+        elif (
+            kb is not None
+            and not kb.unavailable
+            and (it := kb.ix.by_ref.get(c))
+            and restriction.allows(it)
+        ):
             sources.append(
                 {"ref": c, "title": it.doc.title, "kind": it.doc.kind, "publisher": it.doc.pub}
             )
+    if not sources:
+        return None
     return Section(
-        title="[순서]", sentences=[Sentence(text=text, cites=cites)], source="template", route="multi",
+        title="[순서]", sentences=[Sentence(text=text, cites=[s["ref"] for s in sources])], source="template", route="multi",
         sources=sources,
     )  # fmt: skip
 
 
-def merge(parts: list[Part], kb: KB | None = None, asked: str = "") -> Part:
+def merge(
+    parts: list[Part], kb: KB | None = None, asked: str = "", today: date | None = None
+) -> Part:
     """하위 묶음을 그대로 이어 붙인다. 순서 문장(순서를 물었을 때) · 못 찾은 공종 한 줄만 더한다.
 
     asked: 고객 질문 전체. 비우면 순서를 물은 것으로 봐요(예전 동작).
@@ -144,7 +157,7 @@ def merge(parts: list[Part], kb: KB | None = None, asked: str = "") -> Part:
     failed: list[str] = []  # 못 찾은 공종 이름(공종 아닌 담당은 '')
     for p in ordered:
         if want_order and p.route == "trade" and p.trade and prev:
-            sec = order_section((prev, p.trade), kb)
+            sec = order_section((prev, p.trade), kb, asked=asked, today=today)
             if sec is not None:
                 out.sections.append(sec)
         if p.route == "trade" and p.trade:
@@ -190,4 +203,4 @@ def run(task: Task, kb: KB) -> tuple[Part, list[str], int]:
     parts = [AGENTS[t.route](t, kb) for t in tasks]
     failed = sum(1 for p in parts if not p.sections and not p.calc)
     names = [f"{t.route}:{t.trades[0] if t.trades else '-'}" for t in tasks]
-    return merge(parts, kb, asked=task.text), names, failed
+    return merge(parts, kb, asked=task.text, today=task.ctx.today), names, failed

@@ -7,6 +7,7 @@
 
 import math
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 CONF = {
@@ -87,6 +88,7 @@ class Doc:
     kind: str = ""
     rel: str = ""
     url: str = ""
+    effective_date: str = ""
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,7 @@ class Chunk:
     hints: tuple[str, ...] = ()
     trades: tuple[str, ...] = ()
     rid: str = ""  # DB 행: dataset_key/record_key (의미 검색 결과를 조각에 잇는다)
+    effective_date: str = ""
 
 
 @dataclass(eq=False)
@@ -310,6 +313,13 @@ def search(
     return Result(hits, best >= CONF["enough_cov"], kinds)
 
 
+def cite_matches(sentence_grams: set[str], chunk_grams: Collection[str]) -> bool:
+    return bool(sentence_grams) and (
+        sum(1 for token in sentence_grams if token in chunk_grams) / len(sentence_grams)
+        >= CONF["cite_min"]
+    )
+
+
 def verify_cites(ix: Index, text: str) -> tuple[str, int]:
     """문장과 인용 조각의 글자 두 개 묶음 겹침이 cite_min보다 적으면 그 [K] 표시를 뗀다"""
     dropped = 0
@@ -325,7 +335,7 @@ def verify_cites(ix: Index, text: str) -> tuple[str, int]:
             x = ix.by_ref.get(m.group(1))
             if not x or not sg:
                 return m.group(0)
-            if sum(1 for t in sg if t in x.tf) / len(sg) < CONF["cite_min"]:
+            if not cite_matches(sg, x.tf):
                 dropped += 1
                 return ""
             return m.group(0)

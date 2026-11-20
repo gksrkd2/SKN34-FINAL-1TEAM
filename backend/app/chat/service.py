@@ -6,10 +6,12 @@
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import date
 
 from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.schemas import HISTORY_LIMIT, Intent, IntentLabel, Turn
@@ -29,6 +31,8 @@ from app.chat.schemas import (
     section_out,
 )
 from app.shared.errors import AppError
+
+logger = logging.getLogger(__name__)
 
 NOT_FOUND = "대화를 찾을 수 없어요."
 CONFLICT = "다른 질문이 먼저 저장됐어요. 다시 물어봐 주세요."
@@ -149,12 +153,13 @@ def _public(ans) -> AiAnswer:
 async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
     """POST /ai/turns. 남의 대화 · 남의 프로젝트는 404, 같은 대화 동시 저장은 409."""
     from app.agent.v3.answer import KB
-    from app.agent.v3.schemas import TurnContext
-    from app.agent.v3.turn import run_turn
+    from app.agent.v3.schemas import AgentAnswer, Trace, TurnContext
+    from app.agent.v3.templates import KNOWLEDGE_UNAVAILABLE
+    from app.agent.v3.turn import TurnResult, run_turn
     from app.chat import tools
     from app.config import settings
     from app.db import SessionLocal
-    from app.knowledge import cards
+    from app.knowledge import bm25, cards
     from app.knowledge import service as knowledge
     from app.shared import ratelimit
 
@@ -174,7 +179,14 @@ async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
             facts = await tools.project_facts(
                 s, user, body.context.project_id, today, body.context.ids
             )
-        kb = KB(ix=await knowledge.index(s), cards=cards.default())
+    card_set = cards.default()
+    unavailable = KB(ix=bm25.build([], {}), cards=card_set, unavailable=True)
+    try:
+        async with SessionLocal() as s:
+            kb = KB(ix=await knowledge.index(s), cards=card_set)
+    except (SQLAlchemyError, OSError, ValueError, TypeError) as exc:
+        logger.warning("상담 지식 색인 읽기 실패 (%s)", type(exc).__name__)
+        kb = unavailable
     wait_key = _key("wait", str(body.chat_id)) if body.chat_id else None
     waiting = await _get_json(wait_key) if wait_key and waiting_label else None
     if waiting is None and waiting_label:
@@ -187,7 +199,34 @@ async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
         mode=mode(),  # type: ignore[arg-type]
         today=today,
     )
-    res = await run_turn(body.text, ctx, kb=kb, facts=facts, waiting=waiting, button=body.button)
+
+    async def respond(grounding: KB) -> TurnResult:
+        try:
+            return await run_turn(
+                body.text,
+                ctx,
+                kb=grounding,
+                facts=facts,
+                waiting=waiting,
+                button=body.button,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # 검사까지 통과한 답을 만들 수 없으면 고정 문구만 저장한다.
+            logger.warning("상담 답변 생성 또는 검사 실패 (%s)", type(exc).__name__)
+            safe = AgentAnswer(unknown=[KNOWLEDGE_UNAVAILABLE], trace=Trace(mode=ctx.mode))
+            return TurnResult(safe, None, None, 0.0, "rule")
+
+    res = await respond(kb)
+    if res.answer.trace.chunks:
+        try:
+            async with SessionLocal() as s:
+                current = await knowledge.is_current(s, kb.ix)
+        except (SQLAlchemyError, OSError) as exc:
+            logger.warning("상담 지식 버전 확인 실패 (%s)", type(exc).__name__)
+            current = False
+        if not current:
+            # 다른 판에 같은 조각 번호가 있어도 이전 판의 답을 저장하지 않는다.
+            res = await respond(unavailable)
     ans = res.answer
     chat_id, new_rev = body.chat_id, None
     if not ans.failed:

@@ -41,7 +41,7 @@ def _own(key: str, r: dict[str, str]) -> tuple[Chunk, Doc]:
     chunk = Chunk(
         ref=r["ref"], doc=r["doc"], text=r["content"], sec=_sec(r, r.get("page_known") == "true"),
         hints=tuple(json.loads(r.get("hints") or "[]")), trades=_split(r.get("trades")),
-        rid=f"{key}/{r['id']}",
+        rid=f"{key}/{r['id']}", effective_date=r.get("effective_date") or "",
     )  # fmt: skip
     return chunk, doc
 
@@ -68,11 +68,12 @@ def assemble(
         docs[doc] = Doc(
             title=rows[0]["source"].replace(".pdf", ""), pub=rows[0].get("source_org") or "",
             kind=kind, rel="high", url=rows[0].get("source_url") or "",
+            date=rows[0].get("doc_date") or "",
         )  # fmt: skip
         for r in rows:
             chunks.append(
                 Chunk(ref=f"K{k}", doc=doc, text=r["content"], sec=_sec(r), trades=trades,
-                      rid=f"{key}/{r['id']}")
+                      rid=f"{key}/{r['id']}", effective_date=r.get("effective_date") or "")
             )  # fmt: skip
             k += 1
     chunks.sort(key=lambda c: int(c.ref[1:]))

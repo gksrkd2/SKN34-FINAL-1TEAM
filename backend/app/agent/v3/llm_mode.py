@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from app.agent import llm
 from app.agent.v3 import check
 from app.agent.v3.schemas import Section, Sentence
+from app.knowledge import bm25
 
 PROMPTS = Path(__file__).with_name("prompts")
 VERSION = {
@@ -85,7 +86,21 @@ async def rewrite(
         new,
         allowed,
         calc_text=calc,
-        shown=set(evidence) | {c for x in sec.sentences for c in x.cites},
+        shown=set(evidence),
         prompt=system,
     )
-    return kept, dropped
+    if kept is None:
+        return None, dropped
+    provided = {ref: set(bm25.grams(text)) for ref, text in evidence.items()}
+    sentences = []
+    for sent in kept.sentences:
+        grams = set(bm25.grams(sent.text))
+        if all(bm25.cite_matches(grams, provided[ref]) for ref in sent.cites):
+            sentences.append(sent)
+        else:
+            dropped.append("인용 조각과 맞지 않는 문장")
+    if not sentences:
+        return None, dropped
+    refs = {ref for sent in sentences for ref in sent.cites}
+    sources = [s for s in kept.sources if s.get("ref") in refs]
+    return kept.model_copy(update={"sentences": sentences, "sources": sources}), dropped

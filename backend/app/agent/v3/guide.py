@@ -46,7 +46,17 @@ def run(task: Task, kb: KB) -> Part:
         lines.append(templates.MY_HOUSE)
     if lines:
         part.add(templates.section(lines, route="guide"), "\n".join([*lines, templates.ALLOWED]))
-    how = knowledge(part, kb, task.text, trade="common", route="guide", facts=f, policy=task.policy)
+    how = knowledge(
+        part,
+        kb,
+        task.text,
+        trade="common",
+        route="guide",
+        facts=f,
+        policy=task.policy,
+        original=task.asked,
+        today=task.ctx.today,
+    )
     if how == "unknown" and lines:
         part.unknown = [u for u in part.unknown if u != templates.UNKNOWN]
         drop_promise(part)

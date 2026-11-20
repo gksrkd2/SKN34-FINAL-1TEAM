@@ -69,6 +69,7 @@ DEFECT = (
 )
 DIY_RISKY = "{ko} 일 중 전기 · 가스 · 구조 · 방수에 닿는 일은 전문 업체에 맡기는 게 안전해요."
 MY_HOUSE = "집 상태는 직접 봐야 정확히 알 수 있어요. 실측 때 업체가 확인해요."
+KNOWLEDGE_UNAVAILABLE = "지금은 믿집 자료를 확인하기 어려워요."
 UNKNOWN = "이 질문은 믿집 자료로 확인하지 못했어요."
 UNKNOWN_WHERE = "{where}에 물어보시면 정확해요."
 ASK_BACK = "어떤 걸 물어보신 건지 골라 주세요."

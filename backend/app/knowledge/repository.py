@@ -28,12 +28,26 @@ async def chunk_rows(
     keys = dict(versions)
     out: dict[uuid.UUID, list[dict]] = {v: [] for v in keys}
     rows = await s.execute(
-        select(RagChunk.dataset_id, RagChunk.content, RagChunk.section, RagChunk.provenance)
+        select(
+            RagChunk.dataset_id,
+            RagChunk.content,
+            RagChunk.section,
+            RagChunk.provenance,
+            RefDatasetVersion.effective_date,
+        )
+        .join(RefDatasetVersion, RefDatasetVersion.id == RagChunk.dataset_id)
         .where(RagChunk.dataset_id.in_(keys))
         .order_by(RagChunk.dataset_id, RagChunk.record_key)
     )
     for r in rows:
-        out[r.dataset_id].append({**r.provenance, "content": r.content, "section": r.section})
+        out[r.dataset_id].append(
+            {
+                **r.provenance,
+                "content": r.content,
+                "section": r.section,
+                "effective_date": r.provenance.get("effective_date") or str(r.effective_date or ""),
+            }
+        )
     return [(keys[v], rs) for v, rs in out.items()]
 
 

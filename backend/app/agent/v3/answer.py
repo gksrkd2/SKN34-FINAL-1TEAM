@@ -8,6 +8,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import date
 
 from app.agent.v3 import check, templates
 from app.agent.v3.schemas import (
@@ -40,6 +41,7 @@ class KB:
     ix: bm25.Index
     cards: cards.CardSet
     tags: Mapping[str, str] = field(default_factory=lambda: TAG_TO_CODE)
+    unavailable: bool = False
 
 
 @dataclass
@@ -109,11 +111,13 @@ def accept(
     return None, [x for _, x in ranked]
 
 
-def card_section(card: cards.AnswerCard, *, route: Route, trade: TradeCode | None) -> Section:
+def card_section(
+    card: cards.AnswerCard, *, route: Route, trade: TradeCode | None, refs: set[str]
+) -> Section:
     tag = card.tag
 
     def sent(x: cards.CardSentence | None) -> Sentence | None:
-        return Sentence(text=x.text, cites=[*x.cites, tag]) if x else None
+        return Sentence(text=x.text, cites=[*(r for r in x.cites if r in refs), tag]) if x else None
 
     ko = BY_CODE[card.trade].ko if card.trade in BY_CODE else ""
     return Section(
@@ -124,7 +128,11 @@ def card_section(card: cards.AnswerCard, *, route: Route, trade: TradeCode | Non
         source="card",
         route=route,
         trade=trade or card.trade,  # type: ignore[arg-type]
-        sources=[s.model_dump(include={"ref", "title", "kind", "publisher"}) for s in card.sources],
+        sources=[
+            s.model_dump(include={"ref", "title", "kind", "publisher"})
+            for s in card.sources
+            if s.ref in refs
+        ],
     )
 
 
@@ -134,9 +142,43 @@ def card_allowed(kb: KB, card: cards.AnswerCard) -> str:
     return "\n".join(texts)
 
 
-def search(kb: KB, q: str, trade: TradeCode | None) -> bm25.Result:
+def search(
+    kb: KB, q: str, trade: TradeCode | None, *, original: str = "", today: date | None = None
+) -> bm25.Result:
     want = [trade] if trade and trade != "common" else []
-    return search3.search(kb.ix, q, trades=want, tags=kb.tags, k=8)
+    return search3.search(
+        kb.ix, q, trades=want, tags=kb.tags, k=8, policy_text=original, today=today
+    )
+
+
+def card_refs(card: cards.AnswerCard, kb: KB, restriction: search3.Limits) -> set[str] | None:
+    """카드의 출처가 질문 제약과 다르면 제외한다. 정적 카드에서 조회하지 못한 DB 번호는 공개하지 않는다."""
+    metadata = {s.ref: s for s in card.sources}
+    refs = set()
+    for ref in card.cites():
+        if ref in cards.DOC_REFS:
+            if restriction.kinds or restriction.dated:
+                return None
+            refs.add(ref)
+            continue
+        source = metadata.get(ref)
+        if source and not restriction.allows_kind(source.kind):
+            return None
+        item = kb.ix.by_ref.get(ref)
+        if kb.unavailable or item is None:
+            if kb.unavailable or restriction.kinds or restriction.dated:
+                return None
+            continue
+        scope = search3.scope(item, kb.tags)
+        if not restriction.allows(item) or (
+            card.trade != "common" and scope and card.trade not in scope
+        ):
+            return None
+        # 같은 조각 번호가 다른 문서에 배정됐으면 카드 근거로 연결하지 않는다.
+        if source and (source.title != item.doc.title or source.kind != item.doc.kind):
+            return None
+        refs.add(ref)
+    return refs
 
 
 def knowledge(
@@ -150,9 +192,18 @@ def knowledge(
     facts: ProjectFacts | None = None,
     allow_extract: bool = True,
     policy: list[PolicyFlag] | tuple = (),
+    card_id: str | None = None,
+    original: str = "",
+    today: date | None = None,
 ) -> str:
     """카드 → 조각 문장 → 모름 순서로 part에 담는다. 어느 길로 답했는지 돌려준다(card · extract · unknown)."""
-    hits = search(kb, q, trade)
+    original = original or q
+    restriction = search3.limits(original, today)
+    hits = (
+        bm25.Result([], False, [])
+        if kb.unavailable
+        else search(kb, q, trade, original=original, today=today)
+    )
     top = [h.ref for h in hits.hits[:8]]
     want = [trade] if trade and trade != "common" else None
     matches = cards.find(kb.cards, q, trades=want, intents=intents, k=4)
@@ -165,13 +216,27 @@ def knowledge(
         and (intents is None or kb.cards.cards[i].intent in intents)
     ]  # fmt: skip
     matches += cards.score(kb.cards, q, list(dict.fromkeys(extra)))
-    best, matches = accept(matches, top)
+    matched_refs = {m.card.id: card_refs(m.card, kb, restriction) for m in matches}
+    best, matches = accept([m for m in matches if matched_refs[m.card.id] is not None], top)
+    if (
+        card_id
+        and (card := kb.cards.by_id.get(card_id)) is not None
+        and (refs := card_refs(card, kb, restriction)) is not None
+    ):
+        matched_refs[card.id] = refs
+        best = cards.Match(card=card, score=T_HIGH, key=q)
+        matches = []
     if best is not None:
         c = best.card
         part.used_cards.append(c.tag)
-        part.used_chunks.extend(c.cites())
+        refs = matched_refs[c.id] or set()
+        part.used_chunks.extend(r for r in c.cites() if r in refs)
         part.scores[c.tag] = best.score
-        part.add(card_section(c, route=route, trade=trade), card_allowed(kb, c))
+        part.add(
+            card_section(c, route=route, trade=trade, refs=refs),
+            card_allowed(kb, c),
+            calc_text="",
+        )
         _card_extras(part, c, facts)
         part.suggest.extend(
             m.card.keys[0] for m in matches[1:] if best.score - m.score < NEAR and m.score >= T_CARD
@@ -180,6 +245,14 @@ def knowledge(
     if allow_extract and hits.enough and not (NO_EXTRACT & set(policy)):
         quotes = extract.pick(kb.ix, q, hits.hits)
         if quotes:
+            # 서로 다른 문서·판의 적용 조건을 합쳐 하나의 기준처럼 제시하지 않는다.
+            first = kb.ix.by_ref[quotes[0].ref].chunk
+            quotes = [
+                x
+                for x in quotes
+                if (chunk := kb.ix.by_ref[x.ref].chunk).doc == first.doc
+                and chunk.effective_date == first.effective_date
+            ]
             part.used_chunks.extend(x.ref for x in quotes)
             lead = (
                 templates.EXTRACT_SUMMARY_LEAD
@@ -203,11 +276,13 @@ def knowledge(
                 [lead, *(" ".join([x.text, x.title, *x.summary]) for x in quotes)]
                 + [kb.ix.by_ref[x.ref].chunk.text for x in quotes if x.ref in kb.ix.by_ref]
             )
-            part.add(sec, allowed)
-            if part.sections:
+            n = len(part.sections)
+            part.add(sec, allowed, calc_text="")
+            if len(part.sections) > n:
                 return "extract"
     where = BY_CODE[trade].check_where if trade and trade in BY_CODE else "실측 때 업체"
-    part.unknown.extend([templates.UNKNOWN, templates.UNKNOWN_WHERE.format(where=where)])
+    notice = templates.KNOWLEDGE_UNAVAILABLE if kb.unavailable else templates.UNKNOWN
+    part.unknown.extend([notice, templates.UNKNOWN_WHERE.format(where=where)])
     return "unknown"
 
 

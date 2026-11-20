@@ -135,3 +135,68 @@ def test_iter2_refs_follow_v3_without_overlap_and_doc_home_links_are_hidden():
         r["source_url"] == "" for r in homes
     )  # 품셈 · LH 시방서 · KCS는 출처 이름만
     assert any(r["source_url"].startswith("https://") for r in it2)
+
+
+def test_search_keeps_original_source_date_and_trade_constraints():
+    from datetime import date
+
+    q = "벽지 초배"
+    chunks = [
+        bm25.Chunk(ref, ref, q + " 준비 순서", trades=(trade,))
+        for ref, trade in [
+            ("K1", "도배"),
+            ("K2", "도배"),
+            ("K3", "목공"),
+            ("K4", "도배"),
+            ("K5", "도배"),
+            ("K6", "도배"),
+        ]
+    ]
+    docs = {
+        "K1": bm25.Doc(kind="kcs", date="2025-01-01"),
+        "K2": bm25.Doc(kind="blog", date="2025-01-01"),
+        "K3": bm25.Doc(kind="kcs", date="2025-01-01"),
+        "K4": bm25.Doc(kind="kcs", date="2027-01-01"),
+        "K5": bm25.Doc(kind="kcs", date="2024-01-01"),
+        "K6": bm25.Doc(kind="kcs", date="2025-01-01", effective_date="2027-01-01"),
+    }
+    result = search3.search(
+        bm25.build(chunks, docs),
+        q,
+        tags=TAG_TO_CODE,
+        trades=["dobae"],
+        policy_text="2025년 표준시방서에서 도배 안전 기준을 알려줘",
+        today=date(2026, 11, 20),
+    )
+    assert [hit.ref for hit in result.hits] == ["K1"]
+    assert result.enough
+
+
+def test_extract_uses_one_document_and_asks_to_check_when_topic_is_missing():
+    from app.agent.v3.answer import KB, Part, knowledge
+    from app.knowledge import cards
+
+    ix = bm25.build(
+        [
+            bm25.Chunk(
+                "K1", "a", "초배 보양 점검 절차는 벽면을 말린 뒤 진행한다.", trades=("도배",)
+            ),
+            bm25.Chunk(
+                "K2", "b", "초배 보양 점검 절차는 젖은 상태에서 진행한다.", trades=("도배",)
+            ),
+        ],
+        {"a": bm25.Doc(title="시방서 A", kind="kcs"), "b": bm25.Doc(title="시방서 B", kind="kcs")},
+    )
+    kb = KB(ix=ix, cards=cards.default())
+    extract = Part()
+    assert (
+        knowledge(extract, kb, "초배 보양 점검 절차", trade="dobae", route="trade", intents=())
+        == "extract"
+    )
+    assert len(extract.sections[0].sources) == 1
+    unknown = Part()
+    assert (
+        knowledge(unknown, kb, "제올라이트 흡착 성능", trade="dobae", route="trade", intents=())
+        == "unknown"
+    )
+    assert unknown.unknown and not unknown.sections
