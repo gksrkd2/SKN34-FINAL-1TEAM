@@ -5,7 +5,7 @@
 import { Button } from "@/components/ui/Button";
 import { CalcBox, type CalcLine } from "@/components/ui/CalcBox";
 import { md } from "@/lib/format";
-import type { AiAnswer as Answer, AiButton, AiCalc, AiCard, AiChoice } from "@/lib/api/chat";
+import type { AiAnswer as Answer, AiButton, AiCalc, AiCard, AiChoice, AiRoute, AiTurnOut } from "@/lib/api/chat";
 import s from "./ai.module.css";
 
 const ACTION_PATH: Record<string, (id?: string) => string> = {
@@ -67,7 +67,60 @@ function UiCard({ card, projectId, onPick }: { card: AiCard; projectId?: string;
   return <Choices choices={card.choices} projectId={projectId} onPick={onPick} />;
 }
 
-export function AiAnswer({ answer, projectId, onPick }: { answer: Answer; projectId?: string; onPick?: (text: string, b?: AiButton) => void }) {
+const ROUTE_LABEL: Record<AiRoute, string> = {
+  guide: "일반 안내", trade: "공정 상담", quote_explanation: "견적 설명", schedule: "공정표",
+  multi: "복합 상담", out_of_scope: "범위 밖 안내", ask_back: "질문 확인",
+};
+const TRADE_LABEL: Record<string, string> = {
+  dobae: "도배", mokgong: "목공", floor: "바닥", tile: "타일", bath: "욕실",
+  kitchen: "주방", paint: "도장", film: "필름", electric: "전기", window: "창호",
+  demolition: "철거", plumbing: "설비", common: "공통",
+};
+const CLASSIFICATION_LABEL = { button: "선택지", waiting: "이전 상담 이어가기", rule: "규칙", model: "분류 모델" };
+const SOURCE_LABEL: Record<Answer["sections"][number]["source"], string> = {
+  card: "답 카드", extract: "자료 발췌", llm: "모델 재작성", template: "정해진 안내", calc: "계산 결과",
+};
+
+function QuestionAnalysis({ turn }: { turn: AiTurnOut }) {
+  const { analysis, route, answer, mode } = turn;
+  if (!analysis) return null;
+  const topic = ROUTE_LABEL[route];
+  const trades = analysis.trades.map((trade) => TRADE_LABEL[trade]).filter(Boolean).join(" · ");
+  const participants = analysis.participants.map((part) => {
+    const [role, trade] = part.split(":");
+    return [ROUTE_LABEL[role as AiRoute], TRADE_LABEL[trade]].filter(Boolean).join(" · ");
+  }).filter(Boolean);
+  const sources = new Set(answer.sections.map((section) => SOURCE_LABEL[section.source]));
+  if (answer.calc.length) sources.add("믿집 계산");
+  if (answer.unknown.length) sources.add("확인 안내");
+  const refs = [...new Set(answer.sections.flatMap((section) => section.sources.map((source) => source.ref)))];
+  const classification = CLASSIFICATION_LABEL[analysis.classification];
+  const answerBy = route === "multi" ? "오케스트레이터" : topic;
+  const rows = [
+    ["분류 방식", classification],
+    ["적용 공정", trades || "없어요"],
+    ["답변 주체", answerBy],
+    ["참여 에이전트", participants.join(" / ") || "없어요"],
+    ["답변 모드", mode === "llm" ? "모델 사용 모드" : "무료 모드"],
+    ["적용 프롬프트", analysis.prompts.join(" · ") || "없어요"],
+    ["답변 구성", [...sources].join(" · ") || "없어요"],
+    ["표시된 출처 번호", refs.join(" · ") || "없어요"],
+    ["처리 경로", [classification, answerBy, "출력 검사"].join(" → ")],
+  ];
+
+  return (
+    <details className={s.analysis}>
+      <summary>질문 분석 · {topic}{trades ? ` · ${trades}` : ""}</summary>
+      <dl>
+        {rows.map(([label, value]) => (
+          <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
+        ))}
+      </dl>
+    </details>
+  );
+}
+
+export function AiAnswer({ answer, turn, projectId, onPick }: { answer: Answer; turn?: AiTurnOut; projectId?: string; onPick?: (text: string, b?: AiButton) => void }) {
   const many = answer.sections.length > 1;
   const lines = answer.calc.map(calcLine).filter((x): x is CalcLine => x !== null);
   const notes = answer.calc.filter((c) => calcLine(c) === null && (c.note || c.qty != null));
@@ -106,6 +159,7 @@ export function AiAnswer({ answer, projectId, onPick }: { answer: Answer; projec
           {answer.suggest.map((q) => <Button key={q} variant="text" size="sm" onClick={() => onPick?.(q)}>{q}</Button>)}
         </div>
       ) : null}
+      {turn ? <QuestionAnalysis turn={turn} /> : null}
     </div>
   );
 }

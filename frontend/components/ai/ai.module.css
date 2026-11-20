@@ -8,6 +8,12 @@
 .caution { color: var(--warn); font-size: var(--fs-sm); }
 .tip { color: var(--ink-sub); font-size: var(--fs-sm); }
 .sources { color: var(--ink-mute); font-size: var(--fs-xs); }
+.analysis { border-top: 1px solid var(--line-soft); color: var(--ink-sub); font-size: var(--fs-sm); }
+.analysis summary { cursor: pointer; min-height: var(--mj-hit, 44px); padding: 10px 0; }
+.analysis dl { display: grid; gap: 6px; margin: 0 0 8px; }
+.analysis dl div { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 8px; }
+.analysis dt { font-weight: 600; }
+.analysis dd { margin: 0; }
 .unknown { color: var(--ink-sub); font-size: var(--fs-sm); }
 .calcNote { color: var(--ink-sub); font-size: var(--fs-sm); background: var(--surface-2); border-radius: var(--radius-s); padding: 6px 10px; }
 .ask { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line-soft); padding-top: 8px; }

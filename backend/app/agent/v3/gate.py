@@ -1,7 +1,7 @@
 """입구 관문 v3 (코드, LLM 없음). agents.md 10.1절 순서.
 
-1. 버튼 · 기다리던 담당이면 그대로
-2. 정책 표시 · 분명한 범위 밖
+1. 버튼 선택 · 정책 표시 · 분명한 범위 밖
+2. 새 공종·복합 질문이나 다른 의도가 분명하면 새로 분류하고, 나머지는 기다리던 담당에게
 3. 12공종 낱말 + 문장 나누기 → 여러 조각 · 여러 공종이면 multi
 4. 의도 분류기(intent_lr_v1): 신뢰도 ≥ 기준이면 받고, 범위 밖인데 공종 낱말이 있으면 trade로 바꾼다
 5. 기준 아래면 규칙, 규칙도 없으면 보던 화면으로 동점 깨기, 그래도 없으면 후보 2~3개 버튼(되묻기)
@@ -13,7 +13,7 @@ from itertools import pairwise
 
 from app.agent import intent as clf
 from app.agent.v3 import policy, trades
-from app.agent.v3.schemas import Button, Choice, GateResult, Route, View
+from app.agent.v3.schemas import Button, Choice, GateResult, Route, TradeCode, View
 
 THRESHOLD = 0.7  # settings.intent_confidence_threshold와 같은 값(E1 기준값 곡선으로 다시 봄)
 LABEL_ROUTE: dict[str, Route] = {
@@ -122,6 +122,7 @@ def gate(
     *,
     view: View | None = None,
     waiting: Route | None = None,
+    waiting_trade: TradeCode | None = None,
     button: Button | None = None,
     has_project: bool = False,
     ignore: list[str] | None = None,
@@ -157,19 +158,12 @@ def gate(
             candidates=_candidates(probs) if route == "ask_back" else [],
         )  # fmt: skip
 
-    # 기다리던 담당: 분류기가 다른 의도를 기준 이상으로 말할 때만 옮긴다(route.keep_waiting과 같음)
-    moved = model_route is not None and model_route != waiting and conf >= THRESHOLD
-    if waiting is not None and waiting not in ("ask_back", "out_of_scope") and not moved:
-        return done(waiting, "waiting")
-
     # 범위 밖: 믿집이 하지 않는 일 · 10공종 견적 계산 요청
     if policy.out_of_scope(plain, bool(found)):
         return done("out_of_scope", "rule", keep=True)
     if policy.calc_request(plain) and found and not trades.BY_CODE[found[0]].calc:
         return done("out_of_scope", "rule", keep=True)
 
-    if GREETING.search(plain):
-        return done("guide", "rule")
     sig = _signals(plain, found)
     parts = parts_of(plain)
     part_trades = [trades.trades_in(p) for p in parts]
@@ -177,6 +171,21 @@ def gate(
         len([p for p in part_trades if p]) >= 2 and len({t for p in part_trades for t in p}) >= 2
     )
     multi_trade = len(found) >= 2 and (many_parts or joined(plain, found))
+
+    if "vendor_lookup" in flags and len(parts) == 1 and not multi_trade:
+        return done("guide", "rule", 1.0)
+
+    changed_trade = waiting_trade is not None and any(t != waiting_trade for t in found)
+    moved = model_route is not None and model_route != waiting and conf >= THRESHOLD
+    if (
+        waiting is not None
+        and waiting not in ("ask_back", "out_of_scope")
+        and not (changed_trade or multi_trade or moved)
+    ):
+        return done(waiting, "waiting")
+
+    if GREETING.search(plain):
+        return done("guide", "rule")
 
     if model_route is not None and conf >= THRESHOLD:
         route = model_route

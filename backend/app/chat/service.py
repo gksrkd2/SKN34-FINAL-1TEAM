@@ -23,6 +23,7 @@ from app.chat.schemas import (
     AiSource,
     AiThreadDetailOut,
     AiThreadOut,
+    AiTurnAnalysis,
     AiTurnIn,
     AiTurnOut,
     section_out,
@@ -212,9 +213,18 @@ async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
             await s.commit()
         new_rev = rev + 1
         await _set_json(_key("wait", str(chat_id)), res.waiting, WAIT_TTL)
+    trace = ans.trace
     out = AiTurnOut(
-        chat_id=chat_id, rev=new_rev, mode=ctx.mode, route=ans.trace.route, answer=_public(ans)
-    )
+        chat_id=chat_id,
+        rev=new_rev,
+        mode=ctx.mode,
+        route=trace.route,
+        answer=_public(ans),
+        analysis=AiTurnAnalysis(
+            classification=trace.source, trades=trace.trades,
+            participants=trace.parts, prompts=trace.prompts,
+        ),
+    )  # fmt: skip
     await _set_json(replay_key, out.model_dump(mode="json"), REPLAY_TTL)
     return out
 

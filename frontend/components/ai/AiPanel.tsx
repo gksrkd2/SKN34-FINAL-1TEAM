@@ -121,7 +121,7 @@ export function AiPanel({ screen, projectId, ids, embed = false }: {
           m.role === "user" ? (
             <p key={i} className={s.user}>{m.text}</p>
           ) : (
-            <AiAnswer key={i} answer={m.out.answer} projectId={projectId} onPick={(q, b) => void send(q, b)} />
+            <AiAnswer key={i} answer={m.out.answer} turn={m.out} projectId={projectId} onPick={(q, b) => void send(q, b)} />
           ),
         )}
       </div>

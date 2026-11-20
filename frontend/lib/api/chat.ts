@@ -16,7 +16,13 @@ export type AiSource = { ref: string; title: string; kind: string };
 export type AiSection = { title: string; sentences: string[]; caution: string; tip: string; source: "card" | "extract" | "llm" | "template" | "calc"; route: AiRoute; trade?: string | null; sources: AiSource[] };
 export type AiAsk = { trade: string; slot: string; question: string; options: string[] };
 export type AiAnswer = { notice: string; sections: AiSection[]; calc: AiCalc[]; cards: AiCard[]; ask?: AiAsk | null; unknown: string[]; suggest: string[]; failed: boolean };
-export type AiTurnOut = { chat_id: string | null; rev: number | null; mode: "free" | "llm"; route: AiRoute; answer: AiAnswer };
+export type AiTurnAnalysis = {
+  classification: "button" | "waiting" | "rule" | "model";
+  trades: string[];
+  participants: string[];
+  prompts: string[];
+};
+export type AiTurnOut = { chat_id: string | null; rev: number | null; mode: "free" | "llm"; route: AiRoute; answer: AiAnswer; analysis?: AiTurnAnalysis | null };
 export type AiButton = { route: AiRoute; trade?: string | null; slot?: string | null; value?: string | null };
 export type AiTurnIn = { client_key: string; text: string; chat_id?: string | null; context: { screen?: AiScreen | null; project_id?: string | null; ids?: string[] }; button?: AiButton | null };
 export type AiFaq = { id: string; question: string; sentences: string[]; tip: string; sources: AiSource[]; actions: string[] };

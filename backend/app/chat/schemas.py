@@ -1,6 +1,6 @@
 """AI 칸 API 모양 (`/ai/*`, api.md 16절). 사용자 · 프로젝트는 서버가 세션으로 고정하고 LLM 출력으로 받지 않는다.
 
-- 답 안의 숫자는 계산 엔진 값(CalcBox)뿐이고, 평가용 흔적(trace)은 내보내지 않는다.
+- 질문 분석은 분류·공종·담당·프롬프트 버전만 내보낸다.
 - 출처는 이름 · 종류만 보낸다(주소 없음: `repo:` 같은 저장소 경로가 링크로 보이지 않게).
 """
 
@@ -15,8 +15,10 @@ from app.agent.v3.schemas import (
     AskSlot,
     Button,
     CalcBox,
+    GateSource,
     Route,
     Section,
+    TradeCode,
     UiCard,
     View,
 )
@@ -67,6 +69,13 @@ class AiAnswer(BaseModel):
     failed: bool = False
 
 
+class AiTurnAnalysis(BaseModel):
+    classification: GateSource
+    trades: list[TradeCode] = []
+    participants: list[str] = []
+    prompts: list[str] = []
+
+
 class AiTurnOut(BaseModel):
     """SSE `done` 이벤트 몸통."""
 
@@ -75,6 +84,7 @@ class AiTurnOut(BaseModel):
     mode: Literal["free", "llm"]
     route: Route
     answer: AiAnswer
+    analysis: AiTurnAnalysis | None = None  # 이전 요청의 Redis 재응답과 호환
 
 
 class AiThreadOut(BaseModel):

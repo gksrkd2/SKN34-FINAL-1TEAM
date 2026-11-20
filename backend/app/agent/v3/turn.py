@@ -97,13 +97,26 @@ async def run_turn(
     masked = check.mask(text or "").strip()[:TEXT_MAX]
     w_route = waiting.get("route") if waiting else None
     g = gate_mod.gate(
-        masked, view=ctx.view, waiting=w_route, button=button, has_project=facts is not None,
+        masked, view=ctx.view, waiting=w_route, waiting_trade=waiting.get("trade") if waiting else None,
+        button=button, has_project=facts is not None,
         ignore=ignore_words(facts),
     )  # fmt: skip
     slot = value = None
     asked = ""
-    if waiting and waiting.get("slot") and (g.source == "waiting" or (button and button.slot)):
-        slot = waiting["slot"]
+    waiting_slot = waiting.get("slot") if waiting else None
+    if (
+        waiting
+        and waiting_slot
+        and (
+            g.source == "waiting"
+            or (
+                button is not None
+                and button.slot == waiting_slot
+                and button.trade in (None, waiting.get("trade"))
+            )
+        )
+    ):
+        slot = waiting_slot
         value = (button.value if button and button.value else masked)[:40]
         asked = waiting.get("q", "")
         if waiting.get("trade"):

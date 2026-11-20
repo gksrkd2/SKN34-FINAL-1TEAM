@@ -80,6 +80,25 @@ def test_slot_answer_is_taken_by_waiting_agent_and_not_asked_again():
     assert r.answer.sections
 
 
+@pytest.mark.parametrize(
+    ("text", "route", "trades", "continued"),
+    [
+        ("거주 중이에요", "trade", ["dobae"], True),
+        ("모르겠어요", "trade", ["dobae"], True),
+        ("몰딩 이음새가 벌어졌어요", "trade", ["mokgong"], False),
+        ("도배랑 목공은 뭐부터 해야 해요?", "multi", ["dobae", "mokgong"], False),
+        ("로또 번호 알려줘", "out_of_scope", [], False),
+    ],
+)
+def test_pending_dobae_keeps_short_answers_and_routes_new_topics(text, route, trades, continued):
+    first = turn("합지랑 실크 중에 뭐로 해야 해요?")
+    assert first.waiting
+    r = turn(text, view="standard", facts=FACTS, waiting=first.waiting)
+    assert r.answer.trace.route == route
+    assert r.answer.trace.trades == trades
+    assert (r.source == "waiting") is continued
+
+
 def test_other_trade_question_is_answered_by_that_trade():
     a = turn("강마루랑 강화마루 차이가 뭐예요?").answer
     assert a.trace.route == "trade" and a.trace.trades == ["floor"]
