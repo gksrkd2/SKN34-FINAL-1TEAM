@@ -27,6 +27,8 @@ OVERLAY = re.compile(r"덧방|덧\s*붙|(?:위에|겹쳐).{0,20}(?:붙|바르|�
 LIVING = re.compile(r"거주\s*중|살면서|거주하면서|살고\s*있|이사\s*안\s*나가")
 VACANT = re.compile(r"빈\s*집|공실|짐[이은]?\s*없")
 MOLD_YES = re.compile(r"(?:네|예|있어요|있습니다|있어)[.!\s]*")
+MOLD_NO = re.compile(r"(?:아니요|아뇨|없어요|없습니다|없어)[.!\s]*")
+MOLD_UNSURE = re.compile(r"(?:잘\s*)?(?:모르겠어요|모르겠습니다|몰라요|모름)|아직\s*몰라요")
 
 
 def primary(task: Task) -> str:
@@ -87,6 +89,25 @@ def run(task: Task, kb: KB) -> Part:
             "\n".join([*lines, templates.ALLOWED]),
         )
 
+    # 곰팡이 여부에 대한 짧은 후속 답은 최초 들뜸 설명을 되풀이하지 않는다.
+    # 확답할 수 없는 상태에는 원인 추정 대신 확인할 행동만 안내한다.
+    if code == "dobae" and task.slot == "dobae.mold":
+        reply = (task.value or "").strip()
+        if MOLD_UNSURE.fullmatch(reply) or MOLD_NO.fullmatch(reply) or DRY.search(reply):
+            if MOLD_UNSURE.fullmatch(reply):
+                first = "곰팡이나 물자국이 있는지 확실하지 않다면, 들뜬 곳 주변의 얼룩이나 습기를 확인해 보세요."
+            else:
+                first = "곰팡이나 물자국이 보이지 않는다면, 들뜬 곳의 상태를 계속 살펴보세요."
+            lines_follow = [
+                first,
+                "들뜬 위치와 발생 시점을 기록하고 사진을 남겨 두면 실측이나 보수 요청 때 상태를 설명하기 쉬워요.",
+            ]
+            part.add(
+                templates.section(lines_follow, title="[도배]", route="trade", trade="dobae"),
+                "\n".join(lines_follow),
+            )
+            return part
+
     q = task.text
     if task.slot and task.value:  # 되물은 칸의 답: 원래 질문 + 고른 값으로 다시 찾는다
         q = f"{task.asked} {task.value}".strip()
@@ -119,9 +140,9 @@ def run(task: Task, kb: KB) -> Part:
             or (part.ask.slot == "dobae.living" and (LIVING.search(q) or VACANT.search(q)))
         ):
             part.ask = None
-        if (f"card:{LIVING_PREP}" in selected or task.slot == "dobae.mold") and (
-            LIVING.search(q) or (facts and facts.living == "living" and not VACANT.search(q))
-        ):
+        if (
+            f"card:{LIVING_PREP}" in selected or (task.slot == "dobae.mold" and LIVING.search(q))
+        ) and (LIVING.search(q) or (facts and facts.living == "living" and not VACANT.search(q))):
             wall_only = facts and facts.brief.get("dobae.ceiling") == "벽만 해요"
             place = "시공할 벽 앞" if wall_only else "도배할 공간의"
             prep = f"{place} 가구를 어디로 옮길지 업체와 미리 정해요."

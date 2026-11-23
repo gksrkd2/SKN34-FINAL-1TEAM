@@ -39,7 +39,7 @@ from app.shared.clock import SEOUL, now_utc
 from app.shared.errors import AppError, app_error
 from app.shared.ids import uuid7
 from app.shared.korean import i_ga
-from app.shared.regions import is_region, neighbors
+from app.shared.regions import neighbors
 from app.thread import service as thread_service
 from app.vendor import service as vendor_service
 from app.vendor.schemas import (
@@ -322,8 +322,6 @@ async def _listed(
     s: AsyncSession, p: ProjectOut, trade: str
 ) -> tuple[list[PublicCardOut], list[tuple[PublicCardOut, str]], list[str]]:
     """이 집 구 업체(멈춘 업체 빼고), 0곳이면 가까운 구 업체와 그 구 이름 (C12, B6 neighbors)"""
-    if not is_region(p.sido, p.sgg):
-        return [], [], []
     local = await vendor_service.list_public(s, trade, p.sido, p.sgg)
     facts = await repo.vendor_facts(s, [c.vendor_id for c in local])
     local = [c for c in local if not facts[c.vendor_id].suspended]
@@ -364,11 +362,11 @@ async def vendors_for(
     """업체 고르기: 가견적 낮은 순, 가견적 없음은 맨 뒤, 같으면 상호 순.
     v3 칸(local · nearby · shortlist)은 담기(3칸)와 카드 상태를 같이 준다."""
     p, std, lines = await _standard(s, user, project_id, trade)
-    cards, near, names = await _listed(s, p, trade)
+    cards = await vendor_service.list_public(s, trade, p.sido, p.sgg)
     ids = [c.vendor_id for c in cards]
     prices = await vendor_service.confirmed_prices(s, ids, trade)
     visits = await repo.latest_by_vendor(s, p.id, trade, ids) if ids else {}
-    v3 = await _v3_cards(s, p, std, lines, trade, cards, near, names)
+    v3 = await _v3_cards(s, p, std, lines, trade)
     rows = []
     for c in cards:
         e = _estimate(trade, std, lines, prices.get(c.vendor_id))
@@ -415,11 +413,9 @@ async def _v3_cards(
     std: StandardQuote,
     lines: list[StandardQuoteLine],
     trade: str,
-    local: list[PublicCardOut],
-    near: list[tuple[PublicCardOut, str]],
-    names: list[str],
 ) -> dict:
     """업체 목록 v3 칸 (C10 · C12 · D06): local · nearby(local이 0곳일 때) · nearby_sgg · shortlist"""
+    local, near, names = await _listed(s, p, trade)
     ids = [c.vendor_id for c in local] + [c.vendor_id for c, _ in near]
     cards = await _cards(s, p, std, lines, trade, ids)
     facts = await repo.vendor_facts(s, ids)

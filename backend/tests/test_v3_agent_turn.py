@@ -121,7 +121,21 @@ def test_lifting_asks_once_and_uses_the_follow_up(reply, expected):
     assert answer.answer.trace.trades == ["dobae"]
     assert not answer.answer.ask and not answer.waiting
     assert expected in words(answer.answer)
-    assert any(s.sources for s in answer.answer.sections)
+    if reply not in ("모르겠어요", "곰팡이는 없어요"):
+        assert any(s.sources for s in answer.answer.sections)
+
+
+@pytest.mark.parametrize("reply", ["모르겠어요", "곰팡이는 없어요", "없어요", "아니요"])
+def test_lifting_follow_up_avoids_repeating_cause_and_unrelated_living_prep(reply):
+    facts = FACTS.model_copy(update={"living": "living"})
+    first = turn("벽지가 들떠요", view="standard", facts=facts)
+    follow = turn(reply, view="standard", facts=facts, waiting=first.waiting).answer
+    text = words(follow)
+    assert "발생 시점" in text and "사진" in text
+    assert "초배가 부족" not in text
+    assert "[거주 중 도배 준비]" not in [s.title for s in follow.sections]
+    assert "가구를 어디로 옮길지" not in text
+    assert not follow.ask
 
 
 @pytest.mark.parametrize(

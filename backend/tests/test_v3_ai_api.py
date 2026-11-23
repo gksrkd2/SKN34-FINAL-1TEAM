@@ -329,6 +329,75 @@ def test_three_demo_dobae_vendors_can_be_asked_by_name(api):
     use(api, token)
 
 
+def test_dobae_stage_1_5_chat_flow_from_follow_up_to_public_vendor_detail(api):
+    """한 대화에서 도배 후속 답변·공종 전환·특정 업체 공개 조회를 관통한다."""
+    from tests.test_v3_visit_kit import customer
+    from tests.test_visit_request import listed
+
+    vendor_id = listed(
+        api,
+        "integrated-vendor@mitjip.test",
+        "통합검증도배",
+        areas=[{"sido": "seoul", "sgg": "강남구"}],
+    )
+    _, pid = customer(api, sgg="구로구")
+    context = {"screen": "standard", "project_id": pid}
+
+    first = done(ask(api, "벽지가 들떠요", context=context))
+    cid = first["chat_id"]
+    assert first["answer"]["ask"]["slot"] == "dobae.mold"
+
+    follow = done(ask(api, "모르겠어요", chat_id=cid, context=context))
+    assert follow["analysis"]["trades"] == ["dobae"]
+    assert follow["answer"]["ask"] is None
+    assert "발생 시점" in json.dumps(follow["answer"], ensure_ascii=False)
+
+    multi = done(ask(api, "도배랑 목공은 뭐부터 해야 해요?", chat_id=cid, context=context))
+    assert multi["route"] == "multi"
+    assert set(multi["analysis"]["trades"]) == {"dobae", "mokgong"}
+
+    wood = done(ask(api, "몰딩 이음새가 벌어졌어요", chat_id=cid, context=context))
+    assert wood["analysis"]["trades"] == ["mokgong"]
+    assert wood["analysis"]["classification"] != "waiting"
+
+    vendor = done(ask(api, "통합검증도배 업체 정보 알려줘", chat_id=cid, context=context))
+    assert vendor["chat_id"] == cid and vendor["rev"] == 6
+    assert vendor["answer"]["ask"] is None
+    assert vendor["answer"]["cards"][0]["choices"][0]["action"] == f"vendor_detail:{vendor_id}"
+    assert "강남구" in json.dumps(vendor["answer"], ensure_ascii=False)
+    assert api.get(f"/vendors/{vendor_id}").status_code == 200
+    assert query("select count(*) as n from chat_messages")[0]["n"] == 10
+    assert query("select count(*) as n from visits")[0]["n"] == 0
+
+
+def test_pending_vendor_name_never_exposes_public_detail(api):
+    from tests.helpers import vendor_signup
+
+    email = "pending-lookup@mitjip.test"
+    assert vendor_signup(api, email=email).status_code == 201
+    pending_id = query(
+        "select user_id from vendors where user_id = (select id from users where email = $1)", email
+    )[0]["user_id"]
+    query(
+        "update vendors set biz_name = $1, contact_method = 'phone' where user_id = $2",
+        "심사대기인테리어",
+        pending_id,
+    )
+    assert (
+        query("select status from vendors where user_id = $1", pending_id)[0]["status"] == "pending"
+    )
+
+    use(api, signup(api))
+    answer = done(ask(api, "심사대기인테리어 업체 정보 알려줘"))["answer"]
+    assert not any(
+        choice["action"].startswith("vendor_detail:")
+        for card in answer["cards"]
+        for choice in card["choices"]
+    )
+    assert "심사대기인테리어" not in json.dumps(answer, ensure_ascii=False)
+    assert api.get(f"/vendors/{pending_id}").status_code == 404
+
+
 def test_public_dobae_detail_requires_customer_login(api):
     from tests.test_visit_request import listed
 
