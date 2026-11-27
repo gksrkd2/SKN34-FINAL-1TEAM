@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from app.agent.v3.answer import KB, Part, Task
@@ -20,12 +20,17 @@ ROOT = Path(__file__).parent
 type TradeRunner = Callable[[Task, KB], Part]
 
 
+class QuestionInterpreter(Protocol):
+    def __call__(self, question: str, *, context: str = "") -> Awaitable[object]: ...
+
+
 @dataclass(frozen=True)
 class Specialist:
     retrieve: Callable[[KB, str], Result] | None = None
     prompt_path: Path | None = None
     run: Callable[[Task, KB, TradeRunner], Part] | None = None
     vector_query: Callable[[str], str | None] | None = None
+    interpret_question: QuestionInterpreter | None = None
 
 
 def _folders(root: Path) -> list[Path]:
@@ -69,8 +74,9 @@ def load_specialists(root: Path, known: Mapping[str, TradeSpec]) -> dict[str, Sp
         out[code] = Specialist(
             retrieve=retrieval.retrieve if retrieval else None,
             vector_query=getattr(retrieval, "vector_query", None),
-            run=agent.run if agent else None,
+            run=getattr(agent, "run", None),
             prompt_path=prompt if prompt.is_file() else None,
+            interpret_question=getattr(agent, "interpret_question", None),
         )
     return out
 

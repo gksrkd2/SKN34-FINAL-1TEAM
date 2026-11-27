@@ -4,13 +4,16 @@ import asyncio
 import uuid
 from dataclasses import replace
 from datetime import date
+from types import SimpleNamespace
 
+import pytest
 from v3_kb import repo_kb
 
 from app.agent import llm
 from app.agent.v3 import answer, llm_mode, orchestrator
 from app.agent.v3.schemas import Section, Sentence, TurnContext
-from app.agent.v3.specialists import registered
+from app.agent.v3.specialists import Specialist, registered
+from app.agent.v3.specialists.dobae.question import QuestionOutput
 from app.agent.v3.turn import run_turn
 
 
@@ -32,7 +35,7 @@ def test_tile_surface_search_only_expands_dobae_query(monkeypatch):
     assert calls[1] == (q, None, ["mokgong"])
 
 
-def test_dobae_turn_uses_specialist_prompt(monkeypatch):
+def test_dobae_turn_uses_question_prompt_instead_of_rewriting(monkeypatch):
     kb = repo_kb()
     ref = "K2073"
     q = "타일 위에 도배할 수 있나요?"
@@ -45,17 +48,80 @@ def test_dobae_turn_uses_specialist_prompt(monkeypatch):
 
     async def fake(role, schema, messages):
         calls.append(messages)
-        return schema.model_validate(
-            {"sentences": [{"text": "바탕면을 확인해요.", "cites": [ref]}]}
-        )
+        assert schema is QuestionOutput
+        return schema.model_validate({"facts": [], "request": None})
 
     monkeypatch.setattr(llm, "structured", fake)
     ctx = TurnContext(user_id=uuid.UUID(int=0), today=date(2026, 11, 19), mode="llm")
     result = asyncio.run(run_turn(q, ctx, kb=kb))
 
-    assert result.answer.sections[0].source == "llm"
-    assert "도배 전용" in calls[0][0][1]
+    assert result.answer.sections[0].source == "extract"
+    assert len(calls) == 1 and "도배 질문 해석" in calls[0][0][1]
+    assert "도배 전용" in llm_mode.prompt("trade", "dobae")
     assert llm_mode.prompt("trade", "mokgong") == llm_mode.prompt("trade")
+
+
+@pytest.mark.parametrize(
+    ("code", "question"),
+    [
+        ("mokgong", "도배하고 목공 순서는 어떻게 되나요?"),
+        ("floor", "작은방 벽 한 면만 도배하고, 바닥은 강마루와 강화마루 중 뭐가 달라요?"),
+    ],
+)
+def test_mixed_turn_interprets_only_opted_in_trades(tmp_path, monkeypatch, code, question):
+    from app.agent.v3 import specialists, trades
+
+    folder = tmp_path / code
+    folder.mkdir()
+    (folder / "agent.py").write_text(
+        "async def interpret_question(question, *, context=''):\n"
+        f"    return ({code!r}, question)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(specialists, "__path__", [*specialists.__path__, str(tmp_path)])
+    kb = repo_kb()
+    ctx = TurnContext(user_id=uuid.UUID(int=0), today=date(2026, 11, 19), mode="llm")
+    rewrites, calls, seen = [], [], []
+
+    async def interpret(question, *, context=""):
+        calls.append(question)
+        return ("dobae", question)
+
+    def run(task, turn_kb):
+        trade = task.trades[0]
+        seen.append((trade, turn_kb.interpretations.get((trade, task.search_text))))
+        part = answer.Part(route="trade", trade=trade)
+        sec = Section(source="extract", route="trade", trade=trade,
+                      sentences=[Sentence(text=f"{trades.BY_CODE[trade].ko} 상담이에요.")])  # fmt: skip
+        part.sections.append(sec)
+        return part
+
+    async def rewrite(sec, **kwargs):
+        if sec.route == "trade":
+            rewrites.append(sec.trade)
+        return None, []
+
+    monkeypatch.setitem(
+        registered(), "dobae", replace(registered()["dobae"], interpret_question=interpret)
+    )
+    monkeypatch.setitem(orchestrator.AGENTS, "trade", run)
+    monkeypatch.setattr(llm_mode, "rewrite", rewrite)
+    asyncio.run(run_turn(question, ctx, kb=kb))
+    assert len(calls) == 1
+    assert dict(seen)[code] is None
+    assert rewrites == [code]
+
+    loaded = specialists.load_specialists(tmp_path, trades.BY_CODE)
+    monkeypatch.setitem(registered(), code, loaded[code])
+    rewrites.clear()
+    calls.clear()
+    seen.clear()
+    asyncio.run(run_turn(question, ctx, kb=kb))
+    assert len(calls) == 1
+    assert all(value and value[0] == trade for trade, value in seen)
+    assert {trade for trade, _ in seen} == {"dobae", code}
+    assert rewrites == []
+    assert not kb.interpretations
 
 
 def test_dobae_turn_dispatches_to_specialist_and_mokgong_keeps_common_flow(monkeypatch):
@@ -78,6 +144,26 @@ def test_dobae_turn_dispatches_to_specialist_and_mokgong_keeps_common_flow(monke
     assert dobae.answer.ask is not None and dobae.answer.ask.slot == "dobae.grade"
     assert mokgong.answer.trace.trades == ["mokgong"]
     assert mokgong.answer.sections
+
+
+def test_trade_folder_can_supply_its_own_vendor_request(monkeypatch):
+    ctx = TurnContext(user_id=uuid.UUID(int=0), today=date(2026, 11, 19), mode="llm")
+    question = "바닥은 강마루와 강화마루 중 뭐가 달라요?"
+    vendor = ("바닥 상태를 실측 때 확인해 주세요.",)
+    kb = repo_kb()
+
+    async def interpret(question, *, context=""):
+        return SimpleNamespace(vendor_request=vendor)
+
+    async def no_rewrite(sec, **kwargs):
+        return None, []
+
+    monkeypatch.setattr(llm_mode, "rewrite", no_rewrite)
+    assert not asyncio.run(run_turn(question, ctx, kb=kb)).answer.vendor
+    monkeypatch.setitem(registered(), "floor", Specialist(interpret_question=interpret))
+    answer = asyncio.run(run_turn(question, ctx, kb=kb)).answer
+    assert answer.trace.trades == ["floor"]
+    assert answer.vendor == list(vendor)
 
 
 def test_dobae_search_returns_specialist_results(monkeypatch):

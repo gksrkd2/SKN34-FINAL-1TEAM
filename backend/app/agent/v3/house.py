@@ -3,7 +3,7 @@
 - 결론: 담당이 만든 첫 문장을 그대로 올린다(새 글을 짓지 않음).
 - 이 집 견적서 카드: 질문과 맞는 표준견적서 줄을 계산 엔진 값 그대로 옮긴다(수량 · 단가 · 금액). 금액을 만들지 않는다.
 - 업체에 요청할 말: 정해 둔 정중한 부탁 2줄. 숫자는 그 줄의 계산 값 글자만, 계산 값이 없으면 숫자를 쓰지 않는다.
-  판정(하자예요 · 보상하세요)은 쓰지 않는다. 도배 · 목공 질문 · 이 집 견적서 줄 질문에만 붙인다(가이드 · 범위 밖은 비움).
+  판정(하자예요 · 보상하세요)은 쓰지 않는다. 전문 공종이 제공한 문구를 쓰고, 기존 문구는 도배 · 목공 · 견적서 줄 질문에 붙인다.
 """
 
 import re
@@ -127,26 +127,36 @@ def _vendor(q: str, ln: StandardLineFact | None) -> tuple[str, ...]:
     return ()
 
 
-def shape(ans: AgentAnswer, task: Task, trade: str | None = None) -> AgentAnswer:
+def shape(
+    ans: AgentAnswer,
+    task: Task,
+    trade: str | None = None,
+    *,
+    vendor_request: tuple[str, ...] | None = None,
+) -> AgentAnswer:
     """마지막 검사를 마친 답에 이 집 답 모양을 입힌다. 해당하지 않으면 답을 그대로 돌려준다."""
     trades = set(task.trades) | ({trade} if trade else set())
-    if task.route not in ON_ROUTES or not (
-        trades & set(ON_TRADES) or task.route == "quote_explanation"
-    ):
+    has_house_rules = bool(trades & set(ON_TRADES)) or task.route == "quote_explanation"
+    if task.route not in ON_ROUTES or not (has_house_rules or vendor_request):
         return ans
     if ans.failed or ans.ask is not None or not ans.sections or not ans.sections[0].sentences:
         return ans  # 되묻는 턴은 결론 · 부탁 줄을 붙이지 않는다
     ln = None
     # 견적 설명 길이거나 금액 · 수량을 묻는 말이 있을 때만 이 집 견적서 줄을 붙여요(곰팡이 질문에 '벽지' 줄이 붙지 않게)
     if (
-        task.facts
+        has_house_rules
+        and task.facts
         and task.facts.standard
         and (task.route == "quote_explanation" or MONEY.search(task.text))
     ):
         # 공종 이름(도배 · 목공)만으로는 줄을 고르지 않아요('도배 얼마예요?'에 벽 도배 줄 하나만 붙지 않게)
         ln = match_line(TRADE_WORD.sub(" ", task.text), task.facts.standard.lines)
     # 칸 답 턴('네' · '거실')은 되물은 원래 질문과 합쳐 부탁 줄을 고른다
-    vendor = _vendor(f"{task.asked} {task.text}" if task.slot else task.text, ln)
+    question = f"{task.asked} {task.text}" if task.slot else task.text
+    if vendor_request is not None and ln is None and not PERIOD.search(question):
+        vendor = vendor_request
+    else:
+        vendor = _vendor(question, ln) if has_house_rules else ()
     card = _card(ln) if ln is not None else None
     if not vendor and card is None:
         return ans
@@ -159,7 +169,10 @@ def shape(ans: AgentAnswer, task: Task, trade: str | None = None) -> AgentAnswer
     if not said:
         return ans
     lead = said[0].text
-    sections = [first.model_copy(update={"sentences": said[1:]}), *rest]
+    remaining = said[1:]
+    sections = rest
+    if remaining or first.caution or first.tip or first.sources:
+        sections = [first.model_copy(update={"sentences": remaining}), *rest]
     cards = list(ans.cards)
     if card is not None:
         cards.insert(0, card)

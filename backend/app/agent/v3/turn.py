@@ -9,6 +9,8 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 
+from app.agent import llm
+from app.agent.schemas import FAILED_TEXT
 from app.agent.v3 import check, house, llm_mode, orchestrator, policy, templates
 from app.agent.v3 import gate as gate_mod
 from app.agent.v3.answer import KB, T_HIGH, Part, Task, next_card
@@ -68,8 +70,16 @@ async def _llm(part: Part, kb: KB, question: str) -> tuple[Part, list[str]]:
     """카드 · 조각 묶음만 다시 쓴다. 점수 높은 카드 · 정해 둔 글 · 계산 묶음은 그대로(카드 먼저)."""
     used: list[str] = []
     calc = " ".join(f"{c.label} {c.qty or ''}{c.unit} {c.amount or ''} {c.note}" for c in part.calc)
+    interpreted = {code for code, _ in kb.interpretations}
+    failed = {code for (code, _), result in kb.interpretations.items() if result is None}
+    if part.ask and part.ask.trade in failed:
+        part.ask = None
     out = []
     for sec in part.sections:
+        if sec.route == "trade" and sec.trade in interpreted:
+            if sec.trade not in failed or sec.source not in ("card", "extract"):
+                out.append(sec)
+            continue
         tag = next((c for x in sec.sentences for c in x.cites if c.startswith("card:")), None)
         if sec.source == "card" and tag and part.scores.get(tag, 0) >= T_HIGH:
             out.append(sec)
@@ -88,6 +98,38 @@ async def _llm(part: Part, kb: KB, question: str) -> tuple[Part, list[str]]:
 
 
 type VectorLookup = Callable[[str], Awaitable[tuple[str, ...]]]
+
+
+async def _interpret(tasks: list[Task], kb: KB, masked: str, button: Button | None) -> KB:
+    results: dict[tuple[str, str], object | None] = {}
+    for task in tasks:
+        if task.route != "trade" or not task.trades:
+            continue
+        code = task.trades[0]
+        specialist = registered().get(code)
+        if specialist is None or specialist.interpret_question is None:
+            continue
+        if (
+            button
+            and task.slot
+            and button.slot == task.slot
+            and button.trade == code
+            and button.value == task.value
+        ):
+            pick = next_card(kb, task.slot, task.value or "")
+            options = next((s.options for s in BY_CODE[code].slots if s.key == task.slot), ())
+            if task.value in options or (pick and pick.card is not None):
+                continue
+        question = masked if task.slot else task.text
+        context = task.asked if task.slot else masked if masked != question else ""
+        if not question:
+            continue
+        try:
+            result = await specialist.interpret_question(question, context=check.mask(context))
+        except llm.LLMError:
+            result = None
+        results[code, task.search_text] = result
+    return replace(kb, interpretations=results) if results else kb
 
 
 async def _prepare_search(tasks: list[Task], kb: KB, lookup: VectorLookup) -> KB:
@@ -141,8 +183,10 @@ async def run_turn(
     task = Task(text=masked, route=g.route, trades=g.trades, policy=g.policy, ctx=ctx, facts=facts,
                 slot=slot, value=value, asked=asked)  # fmt: skip
     tasks = orchestrator.split(task) if g.route == "multi" else [task]
-    if ctx.mode == "llm" and load_vectors is not None:
-        kb = await _prepare_search(tasks, kb, load_vectors)
+    if ctx.mode == "llm":
+        kb = await _interpret(tasks, kb, masked, button)
+        if load_vectors is not None:
+            kb = await _prepare_search(tasks, kb, load_vectors)
     names: list[str] = []
     failed_parts = 0
     if g.route == "out_of_scope":
@@ -158,6 +202,15 @@ async def run_turn(
     routes: list[str] = []
     if ctx.mode == "llm" and g.route in ("guide", "trade", "multi"):
         part, routes = await _llm(part, kb, masked)
+        for (code, _), result in kb.interpretations.items():
+            if result is None:
+                line = f"{FAILED_TEXT}."
+                part.add(
+                    templates.section(
+                        [line], title=f"[{BY_CODE[code].ko}]", route="trade", trade=code
+                    ),
+                    line,
+                )
     prompts = [llm_mode.VERSION[r] for r in routes]
     ans = AgentAnswer(
         sections=part.sections, calc=part.calc, cards=part.cards, ask=part.ask,
@@ -170,7 +223,10 @@ async def run_turn(
         ),
     )  # fmt: skip
     ans = check.final(ans, prompt="\n".join(llm_mode.prompt(r) for r in routes) or None)
-    ans = house.shape(ans, task, part.trade)  # 결론 한 줄 · 이 집 견적서 카드 · 업체에 요청할 말
+    interpretation = kb.interpretations.get((part.trade, task.search_text)) if part.trade else None
+    ans = house.shape(
+        ans, task, part.trade, vendor_request=getattr(interpretation, "vendor_request", None)
+    )  # 결론 한 줄 · 이 집 견적서 카드 · 업체에 요청할 말
     new_wait = None
     if ans.ask is not None:
         new_wait = {"route": "trade", "trade": ans.ask.trade, "slot": ans.ask.slot, "q": masked}

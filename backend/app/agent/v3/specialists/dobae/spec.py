@@ -8,12 +8,19 @@ if TYPE_CHECKING:
     from app.agent.v3.trades import Slot, TradeSpec
 
 
+# '타일 위에 벽지'에서 타일은 작업 대상이다. 타일 공정과 같은 위치에서 도배를 먼저 잡는다.
+_TILE_WALLPAPER = (
+    r"(?=타일(?:을 붙인|로 마감한)?\s*(?:벽(?:면)?|바탕(?:면)?|위)"
+    r"(?:\s*위)?(?:에(?:도)?)?\s*(?:바로\s*)?(?:(?:새|실크|합지)\s*)?(?:벽지|도배))타일"
+)
+
+
 def build(spec_type: type[TradeSpec], slot_type: type[Slot]) -> TradeSpec:
     return spec_type(
         "dobae",
         "도배",
         "deep",
-        r"도배|벽지|초배|정배|합지|실크|도배풀|풀자국|퍼티|빠데|광폭|소폭|띠벽지|덧방\s*도배",
+        rf"{_TILE_WALLPAPER}|도배|벽지|초배|정배|합지|실크|도배풀|풀자국|퍼티|빠데|광폭|소폭|띠벽지|덧방\s*도배",
         ("도배",),
         7,
         cautions=(
@@ -51,4 +58,5 @@ def build(spec_type: type[TradeSpec], slot_type: type[Slot]) -> TradeSpec:
             ),
         ),
         calc=True,
+        route_priority=1,
     )

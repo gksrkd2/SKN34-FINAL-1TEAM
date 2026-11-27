@@ -45,6 +45,7 @@ class KB:
     cards: cards.CardSet
     tags: Mapping[str, str] = field(default_factory=lambda: TAG_TO_CODE)
     vector_rids: Mapping[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
+    interpretations: Mapping[tuple[str, str], object | None] = field(default_factory=dict)
 
 
 @dataclass
@@ -145,12 +146,20 @@ def card_allowed(kb: KB, card: cards.AnswerCard) -> str:
     return "\n".join(texts)
 
 
+def _lookup_text(kb: KB, q: str, trade: TradeCode | None) -> str:
+    interpreted = kb.interpretations.get((trade, q)) if trade else None
+    return getattr(interpreted, "lookup_text", None) or q
+
+
 def search(kb: KB, q: str, trade: TradeCode | None) -> bm25.Result:
     specialist = registered().get(trade or "")
     if specialist is not None and specialist.retrieve is not None:
         return specialist.retrieve(kb, q)
     want = [trade] if trade and trade != "common" else []
-    return search3.search(kb.ix, q, trades=want, tags=kb.tags, k=8)
+    query = _lookup_text(kb, q, trade)
+    return search3.search(
+        kb.ix, query, trades=want, tags=kb.tags, k=8, policy_text=q if query != q else None
+    )
 
 
 def knowledge(
@@ -170,6 +179,20 @@ def knowledge(
     top = [h.ref for h in hits.hits[:8]]
     want = [trade] if trade and trade != "common" else None
     matches = cards.find(kb.cards, q, trades=want, intents=intents, k=4)
+    restricted = NO_EXTRACT & set(policy)
+    lookup_text = q if restricted else _lookup_text(kb, q, trade)
+    # 담당이 원문과 정확히 연결한 카드가 있으면 그 결정을 유지한다.
+    if any(match.score == 1 for match in matches):
+        lookup_text = q
+    elif not restricted:
+        interpreted = kb.interpretations.get((trade, q)) if trade else None
+        for card_id in getattr(interpreted, "preferred_cards", ()):
+            preferred = kb.cards.by_id.get(card_id)
+            if preferred and _supported_card(kb, preferred, q, trade, intents):
+                use_card(part, kb, preferred, route=route, trade=trade, facts=facts)
+                return "card"
+    if lookup_text != q:
+        matches = cards.find(kb.cards, lookup_text, trades=want, intents=intents, k=4)
     # 검색 맞물림 후보: 위 조각을 인용한 카드(열쇠 말이 달라도 근거가 같은 카드)
     seen = {m.card.id for m in matches}
     allow = set(want or ()) | {"common"} if want else None
@@ -178,7 +201,9 @@ def knowledge(
         if kb.cards.cards[i].id not in seen and (allow is None or kb.cards.cards[i].trade in allow)
         and (intents is None or kb.cards.cards[i].intent in intents)
     ]  # fmt: skip
-    matches += cards.score(kb.cards, q, list(dict.fromkeys(extra)))
+    matches += cards.score(kb.cards, lookup_text, list(dict.fromkeys(extra)))
+    if lookup_text != q:
+        matches = [m for m in matches if _supported_card(kb, m.card, q, trade, intents)]
     best, matches = accept(matches, top)
     if best is not None:
         c = best.card
@@ -188,7 +213,7 @@ def knowledge(
         )
         return "card"
     if allow_extract and hits.enough and not (NO_EXTRACT & set(policy)):
-        quotes = extract.pick(kb.ix, q, hits.hits)
+        quotes = extract.pick(kb.ix, lookup_text, hits.hits)
         if quotes:
             part.used_chunks.extend(x.ref for x in quotes)
             lead = (
@@ -219,6 +244,18 @@ def knowledge(
     where = BY_CODE[trade].check_where if trade and trade in BY_CODE else "실측 때 업체"
     part.unknown.extend([templates.UNKNOWN, templates.UNKNOWN_WHERE.format(where=where)])
     return "unknown"
+
+
+def _supported_card(
+    kb: KB, card: cards.AnswerCard, q: str, trade: TradeCode | None, intents: tuple[str, ...] | None
+) -> bool:
+    if card.trade not in (trade, "common") or (intents is not None and card.intent not in intents):
+        return False
+    _, excluded = bm25.policy_of(q)
+    cites = card.cites()
+    return bool(cites) and all(
+        ref in kb.ix.by_ref and kb.ix.by_ref[ref].doc.kind not in excluded for ref in cites
+    )
 
 
 def use_card(
